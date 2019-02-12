@@ -5,99 +5,63 @@
 # 	TODO
 # Current Recommended Usage: (in terminal)
 # 	TODO
-
+from matplotlib import pyplot as plt
 import numpy as np
 import os, sys, csv, fnmatch
 import cv2
 
-def grab_dir_images(_dir, patterns = ['*png','*jpg'],verbose=False):
-    found = []
-    for root, dirs, files in os.walk(_dir):
-        for pat in patterns:
-            for file in files:
-                if fnmatch.fnmatch(file, pat):
-                    found.append(os.path.join(root, file))
+def construct_helper_img(_imgs,cspace=cv2.COLOR_GRAY2BGR):
+    print(_imgs[0].shape)
+    n,m = _imgs[0].shape[0], _imgs[0].shape[1]
+    print(n,m)
 
-    imgs = [cv2.imread(path) for path in found]
-    if(verbose): print(found)
-    return found
+    bborder = np.ones((5,m,3),dtype=np.uint8)
+    sborder = np.ones((n,5,3),dtype=np.uint8)
+    cborder = np.ones((5,5,3),dtype=np.uint8)
+    bborder[np.where((bborder==[1,1,1]).all(axis=2))] = [255,0,255]
+    sborder[np.where((sborder==[1,1,1]).all(axis=2))] = [255,0,255]
+    cborder[np.where((cborder==[1,1,1]).all(axis=2))] = [255,0,255]
 
-#get all image in the given directory persume that this directory only contain image files
-def get_images_by_dir(dirname):
-    img_names = os.listdir(dirname)
-    img_paths = [dirname+'/'+img_name for img_name in img_names]
-    imgs = [cv2.imread(path) for path in img_paths]
-    return imgs, img_paths
+    imgs = []
+    for img in _imgs:
+        im = None
+        try:
+            im = cv2.cvtColor(img,cspace)
+        except:
+            im = img
+        imgs.append(im)
 
-def cycle_through_images(key, _imgs, _paths, index, flags=[False]):
-	n = len(_imgs)
-	_flag = False
-	post_recording_step = flags[0]
+    helper_img_t = np.concatenate(
+        (
+            np.concatenate((imgs[0],sborder), axis=1),
+            np.concatenate((imgs[1],sborder), axis=1),
+            np.concatenate((imgs[2],sborder), axis=1)
+        ), axis=1
+    )
 
-	if key == ord('p') or post_recording_step == True:
-		index = index + 1
-		if index >= n:
-			index = 0
-		_flag = True
-		print('Next Image...')
-	if key == ord('o'):
-		index = index - 1
-		if index < 0:
-			index = n - 1
-		_flag = True
-		print('Previous Image...')
+    helper_img_m = np.concatenate(
+        (
+            np.concatenate((bborder,cborder), axis=1),
+            np.concatenate((bborder,cborder), axis=1),
+            np.concatenate((bborder,cborder), axis=1)
+        ), axis=1
+    )
 
-	new_img = np.copy(_imgs[index])
-	new_img_path = _paths[index]
-	return new_img, new_img_path, index, _flag
+    helper_img_b = np.concatenate(
+        (
+            np.concatenate((imgs[3],sborder), axis=1),
+            np.concatenate((imgs[4],sborder), axis=1),
+            np.concatenate((imgs[5],sborder), axis=1)
+        ), axis=1
+    )
 
-def cycle_through_filters(key, index, max_index=2):
-	if key == ord('l'):
-		index += 1
-		if index >= max_index:
-			index = 0
-		print('Next Filter...')
-	if key == ord('k'):
-		index -= 1
-		if index < 0:
-			index = max_index - 1
-		print('Previous Filter...')
+    helper_img = np.concatenate((helper_img_t,helper_img_m,helper_img_b), axis=0)
+    return helper_img
 
-	filter_index = index
-	return filter_index
+def plot_image(img,figNum=None):
+    if(figNum == None): plt.figure()
+    else: plt.figure(figNum)
 
-
-def export_list2csv(_path, _file, _headers, _datalist):
-	filenames = os.path.split(_file)
-	filename = filenames[-1]
-	print(filename)
-
-	if not os.path.exists(str(_path)):
-		print("Target output directory [" + str(_path) + "] does not exist --> MAKING IT NOW")
-		os.makedirs(_path)
-
-	csvFile = str(_path) + "/" + str(filename) + ".csv"
-	with open(csvFile, "w") as output:
-		writer = csv.writer(output, lineterminator='\n')
-		writer.writerow(_headers)
-
-		for row in range(len(_datalist)):
-			tmpData = _datalist[row]
-			writer.writerow(tmpData)
-	print("	Data exporting to ...")
-
-def import_csv2list(_filepath):
-	data = []
-	with open(_filepath, 'rb') as sd:
-		r = csv.DictReader(sd)
-		for line in r:
-			data.append(line)
-	return data
-
-def add_filename_prefixs(_dir, _prefix):
-	filenames = os.listdir(_dir)
-	os.chdir(_dir)
-	for file in filenames:
-		newName = str(_prefix) + "_" + str(file)
-		os.rename(file, newName)
-	print("Finished")
+    plt.imshow(img)
+    plt.subplots_adjust(wspace=0.0,hspace=0.0,left=0.0,right=1.0,top=1.0, bottom=0.0)
+    plt.show()
