@@ -20,14 +20,7 @@ def grab_dir_images(_dir, patterns = ['*png','*jpg'],verbose=False):
 
     imgs = [cv2.imread(path) for path in found]
     if(verbose): print(found)
-    return found
-
-#get all image in the given directory persume that this directory only contain image files
-def get_images_by_dir(dirname):
-    img_names = os.listdir(dirname)
-    img_paths = [dirname+'/'+img_name for img_name in img_names]
-    imgs = [cv2.imread(path) for path in img_paths]
-    return imgs, img_paths
+    return found, imgs
 
 def cycle_through_images(key, _imgs, _paths, index, flags=[False]):
 	n = len(_imgs)
