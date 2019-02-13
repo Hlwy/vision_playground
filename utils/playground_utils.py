@@ -1,26 +1,7 @@
 import os, sys, fnmatch
 import cv2, time
 import numpy as np
-import argparse, pprint
-import matplotlib
 from matplotlib import pyplot as plt
-from matplotlib.ticker import NullFormatter
-from matplotlib.transforms import Bbox
-import matplotlib.gridspec as gridspec
-
-flag_new_img = False
-last_img = None
-umap = None
-vmap = None
-overlay = None
-helper_img = None
-filtered = None
-cpy1 = None
-cpy2 = None
-pre_filter = None
-
-prev_e1,prev_e2,prev_greyThresh = 0, 0, 0
-prev_map = False
 
 def grab_dir_images(_dir, patterns = ['*png','*jpg'],verbose=False):
     found = []
@@ -41,43 +22,6 @@ def plot_image(img,figNum=None):
     plt.subplots_adjust(wspace=0.0,hspace=0.0,left=0.0,right=1.0,top=1.0, bottom=0.0)
     plt.show()
     return 0
-
-
-def uvMapping(_img, get_overlay=True,verbose=False):
-    overlay = None
-    h,w = _img.shape
-    histRange = (0,256)
-    histSz = np.max(_img) + 1
-    if(verbose): print("[UV Mapping] Input Image Size: (%d, %d)" % (h,w))
-
-    umap = np.zeros((histSz,w,1), dtype=np.uint8)
-    vmap = np.zeros((h,histSz,1), dtype=np.uint8)
-
-    for i in range(0,h):
-        vscan = _img[i,:]
-        vrow = cv2.calcHist([vscan],[0],None,[histSz],histRange)
-        if(verbose): print("\t[V Mapping] Scan [%d] (%s) ---- Scan Histogram (%s)" % (i,', '.join(map(str, vscan.shape)), ', '.join(map(str, vrow.shape))))
-        vmap[i,:] = vrow
-
-    for i in range(0,w):
-        uscan = _img[:,i]
-        urow = cv2.calcHist([uscan],[0],None,[histSz],histRange)
-        if(verbose): print("\t[U Mapping] Scan[%d] (%s) ---- Scan Histogram (%s)" % (i,', '.join(map(str, uscan.shape)), ', '.join(map(str, urow.shape))))
-        umap[:,i] = urow
-
-    umap = np.reshape(umap,(histSz,w))
-    vmap = np.reshape(vmap,(h,histSz))
-
-    if(get_overlay):
-        blank = np.ones((umap.shape[0],vmap.shape[1]),np.uint8)*255
-        pt1 = np.concatenate((_img, vmap), axis=1)
-        pt2 = np.concatenate((umap,blank),axis=1)
-        overlay = np.concatenate((pt1,pt2),axis=0)
-        overlay = cv2.cvtColor(overlay,cv2.COLOR_GRAY2BGR)
-
-    if(verbose):
-        print("\t[UV Mapping] U Map = (%s) ----- V Map = (%s)" % (', '.join(map(str, umap.shape)),', '.join(map(str, vmap.shape)) ))
-    return umap,vmap,overlay
 
 def abstract_horizontals(_img,threshold, show_contours=True,verbose=False):
     try: img = cv2.cvtColor(_img,cv2.COLOR_BGR2GRAY)
@@ -141,130 +85,6 @@ def abstract_horizontals(_img,threshold, show_contours=True,verbose=False):
             plot_image(helper,5)
 
     return filtered_cnts, limits, ellipses, pts, centers
-
-def window_slider(_img,_filtered):
-    verbose = False
-    try: img = cv2.cvtColor(_filtered,cv2.COLOR_GRAY2BGR)
-    except: img = _img
-
-    try: grey = cv2.cvtColor(_filtered,cv2.COLOR_BGR2GRAY)
-    except: grey = _filtered
-    display = None
-
-    print(img.shape)
-
-    good_inds = []
-    temp = np.copy(img)
-    h,w = temp.shape[:2]
-    black = np.zeros((h,w,3),dtype=np.uint8)
-
-    deadzone_x = 5
-    rows = [h-50, h]
-    cols = [deadzone_x,w]
-    axis = 0
-    hist = np.sum(img[rows[0]:rows[1],cols[0]:cols[1]], axis=axis)
-    plt.figure(6)
-    plt.plot(range(hist.shape[0]),hist[:])
-    plt.show()
-    x0 = np.argmax(hist[:,0])
-    location = [h,x0]
-
-    try:
-        d = display.dtype
-        display_windows = np.copy(display)
-    except:
-        display_windows = np.copy(img)
-
-    size = [5,15]
-    mask_size = [10,15]
-    window_height,window_width0 = size
-    x_current = abs(int(location[1]))
-    y_current = abs(int(location[0]))
-
-    if x_current <= window_width0: x_current = window_width0
-    if y_current >= h: y_current = h - window_height
-    if verbose == True: print("Starting Location: ", x_current, y_current)
-
-    nonzero = temp.nonzero()
-    nonzeroy = np.array(nonzero[0])
-    nonzerox = np.array(nonzero[1])
-
-    # print(len(nonzerox))
-    direction = "up"
-
-    window = 0
-    flag_done = False
-    threshold = 30
-    x_subset = []
-    y_subset = []
-    subset = []
-
-
-    while(window <= 40 and not flag_done):
-        prev_good_inds = good_inds
-
-        if x_current >= w/2: window_width = window_width0*2
-    #     elif x_current >= w/3 and x_current < w/2: window_width = window_width0*2
-        else: window_width = window_width0
-
-        if x_current >= w:
-            flag_done = True
-            if verbose == True: print("Exiting: Reached max image width.")
-
-        if y_current - window_height >= 0: win_y_low = y_current - window_height
-        else: win_y_low = 0
-
-        if y_current + window_height <= h: win_y_high = y_current + window_height
-        else: win_y_high = h
-
-        # Check for [X] edge conditions
-        if x_current - window_width >= 0: win_x_low = x_current - window_width
-        else: win_x_low = 0
-
-        if x_current + window_width <= w: win_x_high = x_current + window_width
-        else: win_x_high = w
-
-        cv2.circle(display_windows,(x_current,y_current),2,(255,0,255),-1)
-        cv2.rectangle(display_windows,(win_x_low,win_y_high),(win_x_high,win_y_low),(255,255,0), 2)
-
-        # Identify the nonzero pixels in x and y within the window
-        good_inds = ((nonzeroy >= win_y_low) & (nonzeroy < win_y_high) &
-                    (nonzerox >= win_x_low) &  (nonzerox < win_x_high)).nonzero()[0]
-
-        if verbose == True:
-            print("Current Window [" + str(window) + "] Center: " + str(x_current) + ", " + str(y_current))
-            print("\tCurrent Window X Limits: " + str(win_x_low) + ", " + str(win_x_high))
-            print("\tCurrent Window Y Limits: " + str(win_y_low) + ", " + str(win_y_high))
-            print("\tCurrent Window # Good Pixels: " + str(len(good_inds)))
-
-        pxl_count = len(good_inds)
-        if pxl_count >= threshold:
-            xmean = np.int(np.mean(nonzerox[good_inds]))
-            ymean = np.int(np.mean(nonzeroy[good_inds]))
-
-            mask_y_low = ymean - mask_size[0]
-            mask_y_high = ymean + mask_size[0]
-            mask_x_low = xmean - mask_size[1]
-            mask_x_high = xmean + mask_size[1]
-
-            x_subset.append(x_current)
-            y_subset.append(y_current)
-
-            x_current = xmean + window_width
-            y_current = ymean - 2*window_height
-            #         y_current = y_current - 2*window_height
-            cv2.circle(display_windows,(xmean,ymean),2,(0,0,255),-1)
-            cv2.rectangle(black,(mask_x_low,mask_y_high),(mask_x_high,mask_y_low),(255,255,255), cv2.FILLED)
-        else:
-            flag_done = True
-            # x_current = x_current + window_width
-            # x_current = np.int(np.mean(nonzerox[good_inds])) + window_width/2
-        window += 1
-
-    plot_image(display_windows,3)
-    mask = cv2.cvtColor(black,cv2.COLOR_BGR2GRAY)
-    mask_inv = cv2.bitwise_not(mask)
-    return mask, mask_inv
 
 def construct_helper_img(_imgs,cspace=cv2.COLOR_GRAY2BGR):
     print(_imgs[0].shape)
@@ -412,16 +232,12 @@ def find_lines(_img="test/test_disparity.png", method = 1, line_input_method = 0
         blur = cv2.GaussianBlur(dilation,(5,5),0)
         closing = cv2.morphologyEx(grey,cv2.MORPH_CLOSE,kernel, iterations = 2)
 
-        ret, grey_thresh = cv2.threshold(grey,greyThresh,255,masking)
-        ret, close_thresh = cv2.threshold(closing,greyThresh,255,masking)
-        canny = cv2.Canny(blur,25,200,apertureSize = 3)
-
-        helper_imgs = [tmp,grey,dilation,blur,closing,canny]
+        helper_imgs = [tmp,grey,dilation,blur,closing,closing]
         helper_img = construct_helper_img(helper_imgs)
 
 
     if(line_input_method is 1): hlines = blur
-    elif(line_input_method is 2): hlines = canny
+    elif(line_input_method is 2): hlines = blur
     else: hlines = grey
 
     try: hlines = cv2.cvtColor(hlines,cv2.COLOR_BGR2GRAY)
