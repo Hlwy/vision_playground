@@ -10,6 +10,10 @@ class UVMappingPipeline:
         self.nonzero = []
         self.display = []
         self.filtered = []
+        # Ground Segmentation Variables
+        self.masked_ground = []
+        self.ground_line = []
+        self.ground_pts = []
 
         # Filtered Map Images
         self.greyU = []; self.closingU = []; self.dilatedU = []; self.blurredU = []
@@ -74,9 +78,6 @@ class UVMappingPipeline:
         self.prev_grey_thresh = greyThresh
         self.prev_e1, self.prev_e2 = e1, e2
 
-        # Convert Angle to radians for calculations
-        ang = ang * np.pi/180
-
         print(
         """
         Inputs:  (image = %s)
@@ -95,6 +96,8 @@ class UVMappingPipeline:
         """ % (
             _img,strMapSpace,strLineMeth,strFilterMeth,e1,e2,rho,ang,minLineLength,maxLineGap,greyThresh,houghThresh,cnt_thresh
         ))
+        # Convert Angle to radians for calculations
+        ang = ang * np.pi/180
 
         # Begin Processing
         self.read_image(_img)
@@ -103,6 +106,23 @@ class UVMappingPipeline:
         self.filter_image(greyThresh, e1, e2, timing=True)
         cnts, hier = self.find_contours(self.greyV,cnt_thresh)
         _cnts, limits, ellipses, pts, centers = self.extract_contour_x_bounds()
+
+        if(input_method is 1):
+            inputU = self.dilatedU
+            inputV = self.dilatedV
+        elif(input_method is 2):
+            inputU = self.blurredU
+            inputV = self.blurredV
+        else:
+            inputU = self.greyU
+            inputV = self.greyV
+
+        dispU = self.line_finder(inputU, rho, ang, houghThresh, minLineLength, maxLineGap, line_method)
+        dispV = self.line_finder(inputV, rho, ang, houghThresh, minLineLength, maxLineGap, line_method)
+
+        comp_imgs = [self.vmap,self.greyV,self.dilatedV,self.blurredV,self.closingV,dispV]
+        composite = self.construct_composite_img(comp_imgs,2,3)
+        self.plot_image(composite,3)
 
     """
     ============================================================================
@@ -149,6 +169,7 @@ class UVMappingPipeline:
         self.dilatedV = np.copy(dilation_V)
         self.blurredV = np.copy(blur_V)
         self.closingV = np.copy(closing_V)
+        self.masked_ground = cv2.bitwise_and(tmpV, tmpV, mask = maskV)
 
         if(timing):
             t1 = time.time()
@@ -194,7 +215,10 @@ class UVMappingPipeline:
         Attempt to find the horizontal bounds for detected contours
     ============================================================================
     """
-    def extract_contour_x_bounds(self, verbose=False, timing=True):
+    def extract_contour_x_bounds(self, _display=None, verbose=False, timing=True):
+        if(_display is None): display = np.copy(self.greyV)
+        else: display = np.copy(_display)
+
         if(timing): t0 = time.time()
         limits = []; ellipses = []; pts = []; centers = []
         cnts = self.contours
@@ -225,7 +249,7 @@ class UVMappingPipeline:
             dt = t1 - t0
             print("\t[extract_contour_x_bounds] --- Took %f seconds to complete" % (dt))
 
-        self.plot_contours(self.greyV,cnts,ellipses,centers,pts)
+        self.plot_contours(display,cnts,ellipses,centers,pts)
         return cnts, limits, ellipses, pts, centers
 
     """
@@ -234,6 +258,7 @@ class UVMappingPipeline:
     ============================================================================
     """
     def plot_contours(self, _img, _cnts, ellipses, centers, pts):
+
         try: img = cv2.cvtColor(_img,cv2.COLOR_GRAY2BGR)
         except: img = np.copy(_img)
         try: tmp = cv2.cvtColor(_img,cv2.COLOR_GRAY2BGR)
@@ -241,7 +266,7 @@ class UVMappingPipeline:
         display = np.copy(tmp)
 
         for i, cnt in enumerate(_cnts):
-            cv2.drawContours(tmp, [cnt], 0, (0,0,255), 2)
+            cv2.drawContours(tmp, [cnt], 0, (255,0,0), 2)
             cv2.ellipse(display,ellipses[i],(0,255,0),2)
             cv2.circle(display,centers[i],2,(255,0,255), 5)
             cv2.circle(display,pts[i][0],2,(0,255,255), 5)
@@ -444,8 +469,7 @@ class UVMappingPipeline:
         display = np.copy(img)
 
         try:
-            # Find lines using standard Hough Transformation
-            if(_method==0):
+            if(_method==0): # Find lines using standard Hough Transformation
                 count = 0
                 lines = cv2.HoughLines(img,rho,angle,_threshold)
                 for rho,theta in lines[0]:
@@ -468,6 +492,41 @@ class UVMappingPipeline:
             pass
         return display
 
+    """
+    ============================================================================
+        Attempt to fit a polynomial line to the segmented out ground V-Map
+    ============================================================================
+    """
+    def fit_ground_line(self, _vmap, degree=3):
+        tmp = np.copy(_vmap)
+        try: img = cv2.cvtColor(tmp,cv2.COLOR_GRAY2BGR)
+        except: img = tmp
+        h,w = img.shape[0], img.shape[1]
+
+        nonzero = img.nonzero()
+        nonzeroy = np.array(nonzero[0])
+        nonzerox = np.array(nonzero[1])
+        ploty = np.linspace(0, w)
+
+        try: # Try fitting polynomial nonzero data
+            fit = np.poly1d(np.polyfit(nonzerox,nonzeroy, degree))
+            # Generate x and y values for plotting
+            plotx = fit(ploty)
+        except:
+            print("ERROR: Function 'polyfit' failed for LEFT SIDE!")
+            fit = [0, 0]; plotx = [0, 0]
+
+        if(verbose): print(fit)
+
+        xs = np.asarray(ploty,dtype=np.int32); ys = np.asarray(plotx,dtype=np.int32)
+        pts = np.vstack(([xs],[ys])).transpose()
+        cv2.polylines(img, [pts], 0, (255,0,0))
+
+        plt.figure(4); plt.clf(); plt.imshow(img); plt.show()
+        self.ground_line = fit
+        self.ground_pts = pts
+        return fit
+
     """ ============================================================
         Load a depth image from the specified path only if the given path
         is different from the previously used path
@@ -488,6 +547,11 @@ class UVMappingPipeline:
         else:
             self.flag_new_img = False
 
+    """
+    ============================================================================
+                                Plot an Image
+    ============================================================================
+    """
     def plot_image(self,img,figNum=None):
         if(figNum == None): plt.figure()
         else:
@@ -497,3 +561,48 @@ class UVMappingPipeline:
         plt.imshow(img)
         plt.subplots_adjust(wspace=0.0,hspace=0.0,left=0.0,right=1.0,top=1.0, bottom=0.0)
         plt.show()
+
+    """
+    ============================================================================
+        Stitch together a list of images into a composited image for easy viewing
+    ============================================================================
+    """
+    def construct_composite_img(self,_imgs,nRows,nCols, border_width=5, color=(255,0,255) ):
+        n,m = _imgs[0].shape[0], _imgs[0].shape[1]
+        # Create Image Borders for visual seperation
+        border_bot = np.ones((border_width,m,3),dtype=np.uint8)
+        border_side = np.ones((n,border_width,3),dtype=np.uint8)
+        border_corner = np.ones((border_width,border_width,3),dtype=np.uint8)
+        # Fill Border images with color
+        border_bot[:] = color; border_side[:] = color; border_corner[:] = color
+
+        # Attempt to convert all input images into correct colorspace
+        imgs = []
+        for _img in _imgs:
+            try: img = cv2.cvtColor(_img,cv2.COLOR_GRAY2BGR)
+            except: img = np.copy(_img)
+            imgs.append(img)
+
+        # Assemble composite image
+        count = 0
+        sections = []
+        for row in range(nRows):
+            tiles = []; tileBorders = []
+            for col in range(nCols):
+                tmp = np.concatenate((imgs[count],border_side), axis=1)
+                tmpBorder = np.concatenate((border_bot,border_corner), axis=1)
+                tiles.append(tmp); tileBorders.append(tmpBorder)
+                count+=1
+            sections.append(np.concatenate(tiles, axis=1))
+            sections.append(np.concatenate(tileBorders, axis=1))
+
+        return np.concatenate(sections, axis=0)
+
+
+    def modify_image_by_pixels(self,_img, condition=255):
+        tmp = np.copy(_img)
+        indices = np.argwhere(tmp == condition)
+
+        indices = indices[:,:2]
+        disparity_filters = indices[:,0]
+        tmp[np.isin(tmp, disparity_filters)] = 0
