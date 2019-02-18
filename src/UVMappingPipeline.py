@@ -5,7 +5,7 @@ from matplotlib import pyplot as plt
 class UVMappingPipeline:
     def __init__(self):
         # Internally Stored Images
-        self.img = []
+        self.img = []; self.normImg = []
         self.umap = []; self.vmap = []; self.overlay = []
         self.nonzero = []
         self.display = []
@@ -39,6 +39,7 @@ class UVMappingPipeline:
         self.h = self.hv= 480
         self.w = self.wu = 640
         self.dmax = self.hu = self.wv = 256
+        self.dmax_norm = 0
         self.window_size = [10,30]
         self.mask_size = [20,40]
         self.deadzone_vd = 4
@@ -265,7 +266,7 @@ class UVMappingPipeline:
             yk = yk + 2*dWy
             winCount += 1
 
-        if(draw_windows): self.plot_image(display_windows,9)
+        if(draw_windows): self.plot_image(display_windows,5)
 
         if(timing):
             t1 = time.time()
@@ -465,7 +466,7 @@ class UVMappingPipeline:
             np.concatenate((tmp,sborder), axis=1),
             np.concatenate((display,sborder), axis=1)
         ), axis=1)
-        self.plot_image(helper,5)
+        self.plot_image(helper,4)
 
     """
     ============================================================================
@@ -603,30 +604,42 @@ class UVMappingPipeline:
         Create the UV Disparity Mappings from a given depth (disparity) image
     ============================================================================
     """
-    def get_uv_map(self, get_overlay=True, verbose=False, timing=False):
-        if(timing): t0 = time.time()
+    def get_uv_map(self, _img=None, get_overlay=True, verbose=True, timing=False):
         overlay = []
-        img = np.copy(self.img)
-        histRange = (0,self.dmax)
-        if(verbose): print("[UV Mapping] Input Image Size: (%d, %d)" % (self.h,self.w))
+        if(_img is None):
+            img = np.copy(self.img)
+            dmax = np.max(img) + 1
+        else:
+            img = np.copy(_img)
+            dmax = np.max(img)
 
-        umap = np.zeros((self.hu,self.wu,1), dtype=np.uint8)
-        vmap = np.zeros((self.hv,self.wv,1), dtype=np.uint8)
+        # Determine stats for U and V map images
+        h, w = img.shape[:2]
+        hu, wu = dmax, w
+        hv, wv = h, dmax
 
-        for i in range(0,self.h):
+        histRange = (0,dmax)
+        if(verbose): print("[UV Mapping] Input Image Size: (%d, %d) --- w/ max disparity = %.3f" % (h,w, dmax))
+
+        umap = np.zeros((hu,wu,1), dtype=np.uint8)
+        vmap = np.zeros((hv,wv,1), dtype=np.uint8)
+
+        if(timing): t0 = time.time()
+
+        for i in range(0,h):
             vscan = img[i,:]
-            vrow = cv2.calcHist([vscan],[0],None,[self.dmax],histRange)
+            vrow = cv2.calcHist([vscan],[0],None,[dmax],histRange)
             if(verbose): print("\t[V Mapping] Scan [%d] (%s) ---- Scan Histogram (%s)" % (i,', '.join(map(str, vscan.shape)), ', '.join(map(str, vrow.shape))))
             vmap[i,:] = vrow
 
-        for i in range(0,self.w):
+        for i in range(0,w):
             uscan = img[:,i]
-            urow = cv2.calcHist([uscan],[0],None,[self.dmax],histRange)
+            urow = cv2.calcHist([uscan],[0],None,[dmax],histRange)
             if(verbose): print("\t[U Mapping] Scan[%d] (%s) ---- Scan Histogram (%s)" % (i,', '.join(map(str, uscan.shape)), ', '.join(map(str, urow.shape))))
             umap[:,i] = urow
 
-        umap = np.reshape(umap,(self.hu,self.wu))
-        vmap = np.reshape(vmap,(self.hv,self.wv))
+        umap = np.reshape(umap,(hu,wu))
+        vmap = np.reshape(vmap,(hv,wv))
 
         if(get_overlay):
             blank = np.ones((umap.shape[0],vmap.shape[1]),np.uint8)*255
@@ -722,12 +735,11 @@ class UVMappingPipeline:
     def read_image(self,_img):
         if(_img != self.prev_img_path):
             self.img = cv2.imread(_img,cv2.IMREAD_GRAYSCALE)
+            self.normImg = (self.img - np.mean(self.img))/np.std(self.img)
             # Get stats on original image
             self.h, self.w = self.img.shape[:2]
             self.dmax = np.max(self.img) + 1
-            # Determine stats for U and V map images
-            self.hu, self.wu = self.dmax, self.w
-            self.hv, self.wv = self.h, self.dmax
+            self.dmax_norm = np.max(self.normImg)
             # Misc
             self.prev_img_path = _img
             self.flag_new_img = True
