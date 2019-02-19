@@ -20,20 +20,23 @@ class UVMappingPipeline:
         self.disparityBounds = []
 
         # Filtered Map Images
-        self.greyU = []; self.closingU = []; self.dilatedU = []; self.blurredU = []
-        self.greyV = []; self.closingV = []; self.dilatedV = []; self.blurredV = []
+        self.greyU = []; self.greyV = [];
+        self.openingU = []; self.closingU = []; self.dilatedU = []; self.blurredU = []
+        self.openingV = []; self.closingV = []; self.dilatedV = []; self.blurredV = []
 
         # Other Useful Information
         self.contours = self.contoursU = self.contoursV = []
         self.contour_hierarchy = self.contour_hierarchyU = self.contour_hierarchyV = []
+        self.img_dtype = np.uint8
 
         # Previously Used Values (Helps prevent redundant computations)
-        self.prev_img_path = None
         self.flag_new_img = False
+        self.flag_use_normalized = False
         self.prev_map_flag = False
         self.prev_e1, self.prev_e2 = 0, 0
         self.prev_grey_threshU =  0
         self.prev_grey_threshV =  0
+        self.prev_img_path = None
 
         # Sizes
         self.h = self.hv= 480
@@ -57,7 +60,8 @@ class UVMappingPipeline:
         line_method = 1, input_method = 0,
         e1 = 1, e2 = 5, ang = 90, rho = 1, minLineLength = 11, maxLineGap = 11,
         houghThresh = 50, greyThreshU = 35, greyThreshV=14, cnt_thresh = 50.0,
-        show_helpers = True, use_umap = False, flip_thresh_bin = False
+        show_helpers = True, use_umap = False, flip_thresh_bin = False,
+        norm_grey_thresh = 0.5
         ):
 
         # Parse inputs to create string descriptors for control variable copying
@@ -88,6 +92,9 @@ class UVMappingPipeline:
         self.prev_grey_threshU = greyThreshU
         self.prev_grey_threshV = greyThreshV
         self.prev_e1, self.prev_e2 = e1, e2
+        self.flag_use_normalized = flip_thresh_bin
+        if(self.flag_use_normalized): self.img_dtype = np.float64
+        else: self.img_dtype = np.uint8
 
         print(
         """
@@ -113,9 +120,14 @@ class UVMappingPipeline:
 
         # Begin Processing
         self.read_image(_img)
-        self.get_uv_map()
+        imgIn = None
+        if(flip_thresh_bin):
+            imgIn = self.normImg
+            self.plot_image(imgIn,0)
 
-        self.plot_image(self.overlay,0)
+        self.get_uv_map(imgIn)
+
+        self.plot_image(self.overlay,0,'Overlay')
 
         self.filter_image(greyThreshU, greyThreshV, e1, e2, timing=True)
         if(use_umap): cntImgU = self.greyU
@@ -143,7 +155,7 @@ class UVMappingPipeline:
             except: pass
             self.obsImgs.append(tmp)
 
-        self.plot_image(self.display_obstacles,2)
+        self.plot_image(self.display_obstacles,2, 'Obstacles')
 
         if(input_method is 1):
             inputU = self.dilatedU
@@ -159,9 +171,9 @@ class UVMappingPipeline:
         dispV = self.line_finder(inputV, rho, ang, houghThresh, minLineLength, maxLineGap, line_method)
 
         # comp_imgs = [self.vmap,self.greyV,self.dilatedV,self.blurredV,self.closingV,dispV]
-        comp_imgs = [self.umap,self.greyU,self.dilatedU,self.blurredU,self.closingU,dispU]
+        comp_imgs = [self.umap,self.greyU,self.closingU,self.closingThreshU,self.openingU,self.openingThreshU]
         composite = self.construct_composite_img(comp_imgs,2,3)
-        self.plot_image(composite,3)
+        self.plot_image(composite,3, 'Filtered UMaps')
 
     """
     ============================================================================
@@ -297,12 +309,17 @@ class UVMappingPipeline:
         maskU = cv2.cvtColor(black,cv2.COLOR_BGR2GRAY)
         maskU_inv = cv2.bitwise_not(maskU)
         resU = cv2.bitwise_and(tmpU, tmpU, mask = maskU_inv)
-
+        self.resU = resI
         _, greyU = cv2.threshold(resU,grey_thresholdU,255,cv2.THRESH_BINARY)
 
         dilation_U = cv2.dilate(greyU,kernelU,iterations = 1)
         blur_U = cv2.GaussianBlur(dilation_U,(5,5),0)
-        closing_U = cv2.morphologyEx(greyU,cv2.MORPH_CLOSE,kernelU, iterations = 2)
+
+        closing_U = cv2.morphologyEx(resU,cv2.MORPH_CLOSE,kernelU, iterations = 2)
+        opening_U = cv2.morphologyEx(resU,cv2.MORPH_OPEN,kernelU, iterations = 2)
+        _, greyCloseU = cv2.threshold(closing_U,grey_thresholdU,255,cv2.THRESH_BINARY)
+        _, greyOpenU = cv2.threshold(opening_U,grey_thresholdU,255,cv2.THRESH_BINARY)
+
 
         # V-Map: Disparity Filtering w/ siliding window filter
         tmpV = np.copy(self.vmap)
@@ -323,6 +340,9 @@ class UVMappingPipeline:
         self.dilatedU = np.copy(dilation_U)
         self.blurredU = np.copy(blur_U)
         self.closingU = np.copy(closing_U)
+        self.openingU = np.copy(opening_U)
+        self.closingThreshU = np.copy(greyCloseU)
+        self.openingThreshU = np.copy(greyOpenU)
 
         self.vMasked = np.copy(resV)
         self.greyV = np.copy(greyV)
@@ -466,7 +486,7 @@ class UVMappingPipeline:
             np.concatenate((tmp,sborder), axis=1),
             np.concatenate((display,sborder), axis=1)
         ), axis=1)
-        self.plot_image(helper,4)
+        self.plot_image(helper,4,'Contours')
 
     """
     ============================================================================
@@ -611,18 +631,20 @@ class UVMappingPipeline:
             dmax = np.max(img) + 1
         else:
             img = np.copy(_img)
-            dmax = np.max(img)
+            dmax = np.max(img) + 1
 
         # Determine stats for U and V map images
         h, w = img.shape[:2]
         hu, wu = dmax, w
         hv, wv = h, dmax
+        if(verbose):
+            print("[UV Mapping] Input Image Size: (%d, %d) --- w/ max disparity = %.3f" % (h,w, dmax))
+            print("[UV Mapping] Disparity Map Sizes --- U-Map (%.2f, %.2f) ||  V-Map (%.2f, %.2f)" % (hu, wu, hv, wv))
 
         histRange = (0,dmax)
-        if(verbose): print("[UV Mapping] Input Image Size: (%d, %d) --- w/ max disparity = %.3f" % (h,w, dmax))
 
-        umap = np.zeros((hu,wu,1), dtype=np.uint8)
-        vmap = np.zeros((hv,wv,1), dtype=np.uint8)
+        umap = np.zeros((hu,wu,1), dtype=self.img_dtype)
+        vmap = np.zeros((hv,wv,1), dtype=self.img_dtype)
 
         if(timing): t0 = time.time()
 
@@ -751,11 +773,13 @@ class UVMappingPipeline:
                                 Plot an Image
     ============================================================================
     """
-    def plot_image(self,img,figNum=None):
-        if(figNum == None): plt.figure()
+    def plot_image(self,img,figNum=None, title=None):
+        if(figNum == None): fig = plt.figure()
         else:
-            plt.figure(figNum)
+            fig = plt.figure(figNum)
             self.nPlots += 1
+
+        if(title is not None): fig.canvas.set_window_title(title)
 
         plt.imshow(img)
         plt.subplots_adjust(wspace=0.0,hspace=0.0,left=0.0,right=1.0,top=1.0, bottom=0.0)
