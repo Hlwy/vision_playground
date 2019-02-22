@@ -130,15 +130,20 @@ class UVMappingPipeline:
         self.plot_image(self.overlay,0,'Overlay')
 
         self.filter_image(greyThreshU, greyThreshV, e1, e2, timing=True)
-        if(use_umap): cntImgU = self.greyU
-        else: cntImgU = self.dilatedU
+        if(use_umap):
+            cntImgU = self.greyU
+            cntImgV = self.greyV
+        else:
+            self.test_filter_image(greyThreshU, greyThreshV, e1, e2)
+            cntImgU = self.testU
+            cntImgV = self.testV
 
         # cntsV, hierV = self.find_contours(self.greyV,cnt_thresh)
         # self.contoursV = cntsV; self.contour_hierarchyV = hierV
         cntsU, hierU = self.find_contours(cntImgU,cnt_thresh)
         self.contoursU = cntsU; self.contour_hierarchyU = hierU
 
-        _cnts, limits, ellipses, pts, centers = self.extract_contour_x_bounds()
+        _cnts, limits, ellipses, pts, centers = self.extract_contour_x_bounds(_display=cntImgU)
 
         self.nObs = len(self.disparityBounds)
         self.obsImgs = []
@@ -149,7 +154,7 @@ class UVMappingPipeline:
             tmp = cv2.cvtColor(tmp,cv2.COLOR_GRAY2BGR)
             try:
                 xs = self.xBounds[i]
-                ys,disp = self.find_obstacles(self.greyV,self.disparityBounds[i], _threshold=30, lower_threshold=1, verbose = True, display=self.greyV)
+                ys,disp = self.find_obstacles(cntImgV,self.disparityBounds[i], _threshold=30, lower_threshold=1, verbose = False, display=cntImgV)
                 cv2.rectangle(tmp,(xs[0],ys[0]),(xs[1],ys[-1]),(150,0,0),1)
                 cv2.rectangle(self.display_obstacles,(xs[0],ys[0]),(xs[1],ys[-1]),(150,0,0),1)
             except: pass
@@ -207,10 +212,10 @@ class UVMappingPipeline:
 
         # Prevent initial search coordinates from clipping search window at edges
         xk = (disparityRange[1] + disparityRange[0]) / 2
-        yk = 0
+        yk = prev_ymean = prev_yk = 0
         dWy = 20
         dWx = abs(xk - disparityRange[0])
-        if(dWx <= 0): dWx = 1
+        if(dWx <= 1): dWx = 2
 
         if(yk <= 0): yk = 0 + dWy
         if(verbose): print("Starting Location: ", xk, yk, dWx)
@@ -245,33 +250,35 @@ class UVMappingPipeline:
             if(xk + dWx <= w): wx_high = xk + dWx
             else: wx_high = w
 
-            if(draw_windows):
-                cv2.circle(display_windows,(xk,yk),2,(255,0,255),-1)
-                cv2.rectangle(display_windows,(wx_low,wy_high),(wx_high,wy_low),(255,255,0), 1)
-
             # Identify the nonzero pixels in x and y within the window
             good_inds = ((nonzeroy >= wy_low) & (nonzeroy < wy_high) &
                         (nonzerox >= wx_low) &  (nonzerox < wx_high)).nonzero()[0]
             nPxls = len(good_inds)
             if verbose == True:
-                print("Current Window [" + str(count) + "] Center: " + str(xk) + ", " + str(yk))
-                # print("\tCurrent Window X Limits: " + str(wx_low) + ", " + str(wx_high))
-                # print("\tCurrent Window Y Limits: " + str(wy_low) + ", " + str(wy_high))
-                print("\tCurrent Window # Good Pixels: " + str(nPxls))
+                print("Current Window [" + str(count) + "] ----- Center: " + str(xk) + ", " + str(yk) + " ----- # of good pixels = "  + str(nPxls))
 
             # Record mean coordinates of pixels in window and update new window center
             if(nPxls >= _threshold):
                 xmean = np.int(np.mean(nonzerox[good_inds]))
                 ymean = np.int(np.mean(nonzeroy[good_inds]))
+                prev_ymean = ymean
+                prev_yk = yk
                 mean_pxls.append([xmean,ymean])
-                if(count == 0): ys.append(yk - dWy)
-                else: ys.append(yk)
+                if(count == 0):
+                    ys.append(yk - dWy)
+                else:
+                    ys.append(yk)
+
+                if(draw_windows):
+                    cv2.circle(display_windows,(xk,yk),2,(255,0,255),-1)
+                    cv2.rectangle(display_windows,(wx_low,wy_high),(wx_high,wy_low),(255,255,0), 1)
+                    cv2.circle(display_windows,(xmean,ymean),2,(0,0,255),-1)
+
                 flag_found_start = True
                 count+=1
-                if(draw_windows): cv2.circle(display_windows,(xmean,ymean),2,(0,0,255),-1)
             elif(nPxls <= lower_threshold and flag_found_start):
                 flag_done = True
-                ys.append(yk)
+                ys[-1] = prev_yk + dWy
 
             # Update New window center coordinates
             xk = xk
@@ -283,7 +290,7 @@ class UVMappingPipeline:
         if(timing):
             t1 = time.time()
             dt = t1 - t0
-            print("\t[get_vmap_mask] --- Took %f seconds to complete" % (dt))
+            print("\t[find_obstacles] --- Took %f seconds to complete" % (dt))
         return ys, display_windows
 
 
@@ -309,7 +316,7 @@ class UVMappingPipeline:
         maskU = cv2.cvtColor(black,cv2.COLOR_BGR2GRAY)
         maskU_inv = cv2.bitwise_not(maskU)
         resU = cv2.bitwise_and(tmpU, tmpU, mask = maskU_inv)
-        self.resU = resI
+        self.resU = resU
         _, greyU = cv2.threshold(resU,grey_thresholdU,255,cv2.THRESH_BINARY)
 
         dilation_U = cv2.dilate(greyU,kernelU,iterations = 1)
@@ -327,7 +334,7 @@ class UVMappingPipeline:
         _, greyV = cv2.threshold(tmpV,grey_thresholdV,255,cv2.THRESH_BINARY)
 
         # Sliding Window Technique for filtering out ground
-        maskV, invMaskV = self.get_vmap_mask(greyV,verbose=False)
+        maskV, invMaskV,_ = self.get_vmap_mask(greyV,verbose=False)
         resV = cv2.bitwise_and(tmpV, tmpV, mask = invMaskV)
         _, greyV = cv2.threshold(resV,grey_thresholdV,255,cv2.THRESH_BINARY)
 
@@ -355,6 +362,61 @@ class UVMappingPipeline:
             t1 = time.time()
             dt = t1 - t0
             print("\t[filter_image] --- Took %f seconds to complete" % (dt))
+
+        return 0
+
+    """
+    ============================================================================
+        Testing of standardization of UV-Maps
+    ============================================================================
+    """
+    def test_filter_image(self, grey_thresholdU, grey_thresholdV, _e1, _e2, verbose=False, timing=False):
+        if(timing): t0 = time.time()
+        # Morphological Kernels
+        kernelU = np.ones((_e1,_e2),np.uint8)
+        kernelV = np.ones((_e2,_e1),np.uint8)
+
+        # U-Map: Disparity Filtering
+        tmpU = np.copy(self.umap)
+        tmpU = cv2.cvtColor(tmpU,cv2.COLOR_GRAY2BGR)
+        # Filter out disparities extremely close
+        tmpH,tmpW = tmpU.shape[:2]
+        black = np.zeros((tmpH,tmpW,3),dtype=np.uint8)
+        cv2.rectangle(black,(0,0),(tmpW,self.deadzone_ud),(255,255,255), cv2.FILLED)
+        cv2.rectangle(black,(0,tmpH-self.deadzone_ud),(tmpW,tmpH),(255,255,255), cv2.FILLED)
+        maskU = cv2.cvtColor(black,cv2.COLOR_BGR2GRAY)
+        maskU_inv = cv2.bitwise_not(maskU)
+        resU = cv2.bitwise_and(tmpU, tmpU, mask = maskU_inv)
+
+        # Begin Test Filtering
+        tmp = np.copy(resU)
+        normU = (tmp - np.mean(tmp))/np.std(tmp)
+        testU = cv2.convertScaleAbs(normU, normU)
+        _, tmpGreyU = cv2.threshold(testU,grey_thresholdU,255,cv2.THRESH_BINARY)
+        self.testU = np.copy(tmpGreyU)
+
+
+        # V-Map: Disparity Filtering w/ siliding window filter
+        tmpV = np.copy(self.vmap)
+        tmpV = cv2.cvtColor(tmpV,cv2.COLOR_GRAY2BGR)
+        ttmpV = np.copy(self.vmap)
+
+        normV = (tmpV - np.mean(tmpV))/np.std(tmpV)
+        testV = cv2.convertScaleAbs(normV, normV)
+        _, tmpGreyV = cv2.threshold(testV,grey_thresholdV,255,cv2.THRESH_BINARY)
+        # self.testV = np.copy(tmpGreyV)
+
+        # Sliding Window Technique for filtering out ground
+        maskV, invMaskV,_ = self.get_vmap_mask(tmpGreyV,verbose=True)
+        # resV = cv2.bitwise_and(tmpV, tmpV, mask = invMaskV)
+        resV = cv2.bitwise_and(ttmpV, ttmpV, mask = invMaskV)
+        _, greyV = cv2.threshold(resV,grey_thresholdV,255,cv2.THRESH_BINARY)
+        self.testV = cv2.cvtColor(greyV,cv2.COLOR_GRAY2BGR)
+
+        if(timing):
+            t1 = time.time()
+            dt = t1 - t0
+            print("\t[test_filter_image] --- Took %f seconds to complete" % (dt))
 
         return 0
 
@@ -493,7 +555,7 @@ class UVMappingPipeline:
         Abstract a mask image for filtering out the ground from a V-Map
     ============================================================================
     """
-    def get_vmap_mask(self, _img, _threshold=30, plot_histogram=False, draw_windows=True, verbose=False, timing=False):
+    def get_vmap_mask(self, _img, _threshold=20, plot_histogram=False, draw_windows=True, draw_method=0, verbose=False, timing=False):
         if(timing): t0 = time.time()
         # Temporary dump variables
         display = None
@@ -532,7 +594,7 @@ class UVMappingPipeline:
 
         if(y0 >= h): yk = h - dWy
         else: yk = y0
-        if(verbose): print("Starting Location: ", xk, yk)
+        if(verbose): print("[get_vmap_mask] --- Starting Location: ", xk, yk)
 
         if(plot_histogram):
             plt.figure(self.nPlot+1)
@@ -580,23 +642,24 @@ class UVMappingPipeline:
                         (nonzerox >= wx_low) &  (nonzerox < wx_high)).nonzero()[0]
             nPxls = len(good_inds)
             if verbose == True:
-                print("Current Window [" + str(count) + "] Center: " + str(xk) + ", " + str(yk))
-                print("\tCurrent Window X Limits: " + str(wx_low) + ", " + str(wx_high))
-                print("\tCurrent Window Y Limits: " + str(wy_low) + ", " + str(wy_high))
-                print("\tCurrent Window # Good Pixels: " + str(nPxls))
+                print("\tCurrent Window [" + str(count) + "] Center: " + str(xk) + ", " + str(yk) + " ----- # Good Pixels = " + str(nPxls))
+                # print("\tCurrent Window X Limits: " + str(wx_low) + ", " + str(wx_high))
+                # print("\tCurrent Window Y Limits: " + str(wy_low) + ", " + str(wy_high))
+                # print("\tCurrent Window # Good Pixels: " + str(nPxls))
 
             # Record mean coordinates of pixels in window and update new window center
             if(nPxls >= _threshold):
                 xmean = np.int(np.mean(nonzerox[good_inds]))
                 ymean = np.int(np.mean(nonzeroy[good_inds]))
-                mean_pxls.append([xmean,ymean])
+                mean_pxls.append(np.array([xmean,ymean]))
 
                 # Draw current window onto mask template
                 my_low = ymean - dMy
                 my_high = ymean + dMy
                 mx_low = xmean - dMx
                 mx_high = xmean + dMx
-                cv2.rectangle(black,(mx_low,my_high),(mx_high,my_low),(255,255,255), cv2.FILLED)
+                if(draw_method == 0):
+                    cv2.rectangle(black,(mx_low,my_high),(mx_high,my_low),(255,255,255), cv2.FILLED)
 
                 # Update New window center coordinates
                 xk = xmean + dWx
@@ -607,6 +670,28 @@ class UVMappingPipeline:
             count += 1
 
         if(draw_windows): self.plot_image(display_windows,1)
+        mean_pxls = np.array(mean_pxls)
+        print(mean_pxls.shape, mean_pxls[-1,0])
+
+        if(draw_method == 1):
+            ploty = np.linspace(0, mean_pxls[-1,0])
+            try: # Try fitting polynomial nonzero data
+                fit = np.poly1d(np.polyfit(mean_pxls[:,0],mean_pxls[:,1], 3))
+                # Generate x and y values for plotting
+                plotx = fit(ploty)
+            except:
+                print("ERROR: Function 'polyfit' failed!")
+                fit = [0, 0]; plotx = [0, 0]
+
+            print(fit)
+
+            xs = np.asarray(ploty,dtype=np.int32)
+            ys = np.asarray(plotx,dtype=np.int32)
+            print(xs.shape, ys.shape)
+            pts = np.vstack(([xs],[ys])).transpose()
+
+            cv2.polylines(black, [pts], 0, (255,255,255),5)
+            self.plot_image(black,10,'V-Mask')
 
         cv2.rectangle(black,(0,0),(deadzone_x,h),(255,255,255), cv2.FILLED)
         mask = cv2.cvtColor(black,cv2.COLOR_BGR2GRAY)
@@ -617,14 +702,14 @@ class UVMappingPipeline:
             dt = t1 - t0
             print("\t[get_vmap_mask] --- Took %f seconds to complete" % (dt))
 
-        return mask, mask_inv
+        return mask, mask_inv, mean_pxls
 
     """
     ============================================================================
         Create the UV Disparity Mappings from a given depth (disparity) image
     ============================================================================
     """
-    def get_uv_map(self, _img=None, get_overlay=True, verbose=True, timing=False):
+    def get_uv_map(self, _img=None, get_overlay=True, verbose=False, timing=False):
         overlay = []
         if(_img is None):
             img = np.copy(self.img)
