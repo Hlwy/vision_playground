@@ -186,7 +186,7 @@ class UVMappingPipeline:
         the U-Map
     ============================================================================
     """
-    def find_obstacles(self, _img, disparityRange, _threshold=30, lower_threshold=1, draw_windows=True, verbose=False, timing=False, display=None):
+    def find_obstacles(self, _img, disparityRange, _threshold=30, lower_threshold=1, plot_windows = False, draw_windows=True, verbose=False, timing=False, display=None):
         if(timing): t0 = time.time()
         # Temporary dump variables
         count = 0; winCount = 0
@@ -285,7 +285,7 @@ class UVMappingPipeline:
             yk = yk + 2*dWy
             winCount += 1
 
-        if(draw_windows): self.plot_image(display_windows,5)
+        if(plot_windows): self.plot_image(display_windows,5)
 
         if(timing):
             t1 = time.time()
@@ -468,7 +468,7 @@ class UVMappingPipeline:
         Attempt to find the horizontal bounds for detected contours
     ============================================================================
     """
-    def extract_contour_x_bounds(self, _cnts=None, _display=None, verbose=False, timing=True):
+    def extract_contour_x_bounds(self, _cnts=None, _display=None, verbose=False, timing=True, plot=False):
         if(_display is None): display = np.copy(self.greyU)
         else: display = np.copy(_display)
 
@@ -517,7 +517,7 @@ class UVMappingPipeline:
             dt = t1 - t0
             print("\t[extract_contour_x_bounds] --- Took %f seconds to complete" % (dt))
 
-        self.plot_contours(display,cnts,ellipses,centers,pts)
+        if(plot): self.plot_contours(display,cnts,ellipses,centers,pts)
         return cnts, limits, ellipses, pts, centers
 
     """
@@ -555,21 +555,35 @@ class UVMappingPipeline:
         Abstract a mask image for filtering out the ground from a V-Map
     ============================================================================
     """
-    def get_vmap_mask(self, _img, _threshold=20, plot_histogram=False, draw_windows=True, draw_method=0, verbose=False, timing=False):
+    def get_vmap_mask(self, _img, _threshold=20, maxWindows=None, plot_histogram=False, mask_size=None, draw_windows=True, show_windows=False, draw_method=0, verbose=False, timing=False, dx=None):
         if(timing): t0 = time.time()
         # Temporary dump variables
-        display = None
         count = 0
-        maxStep = 40
-        deadzone_x = self.deadzone_vd
+        display = None
+        if(maxWindows is None): maxStep = 40
+        else: maxStep = maxWindows
+        
         flag_done = False
         good_inds = [] # Indices used for keeping track of pixels w/in current window
         mean_pxls = []
+        h,w = _img.shape[:2]
 
         dWy,dWx = np.int32(self.window_size)/2
-        dMy,dMx = np.int32(self.mask_size)/2
 
-        h,w = _img.shape[:2]
+        if(mask_size is None): dMy,dMx = np.int32(self.mask_size)/2
+        else: dMy,dMx = np.int32(mask_size)/2
+
+        if(dx is None):
+            deadzone_x = self.deadzone_vd
+            _dx = dWy
+            y0 = abs(int(h))
+        else:
+            deadzone_x = 0
+            _dx = dx
+            y0 = abs(int(h-_dx))
+
+        if(verbose): print("[get_vmap_mask] --- deadzone_x = %d --- dx = %d"% (deadzone_x, _dx) )
+
         # Create a black template to create mask with
         black = np.zeros((h,w,3),dtype=np.uint8)
 
@@ -585,9 +599,9 @@ class UVMappingPipeline:
         tmp = np.copy(imgV)
 
         # Take the bottom strip of the input image to find potential points to start sliding from
-        hist = np.sum(tmp[h-dWy:h,deadzone_x:w], axis=0)
+        hist = np.sum(tmp[h-_dx:h,deadzone_x:w], axis=0)
         x0 = abs(int(np.argmax(hist[:,0])))
-        y0 = abs(int(h))
+
         # Prevent initial search coordinates from clipping search window at edges
         if(x0 <= dWx): xk = dWx
         else: xk = x0
@@ -597,7 +611,7 @@ class UVMappingPipeline:
         if(verbose): print("[get_vmap_mask] --- Starting Location: ", xk, yk)
 
         if(plot_histogram):
-            plt.figure(self.nPlot+1)
+            plt.figure()
             plt.plot(range(hist.shape[0]),hist[:])
             plt.show()
 
@@ -669,7 +683,7 @@ class UVMappingPipeline:
             else: flag_done = True
             count += 1
 
-        if(draw_windows): self.plot_image(display_windows,1)
+        if(show_windows): self.plot_image(display_windows,1)
         mean_pxls = np.array(mean_pxls)
         print(mean_pxls.shape, mean_pxls[-1,0])
 
@@ -702,7 +716,7 @@ class UVMappingPipeline:
             dt = t1 - t0
             print("\t[get_vmap_mask] --- Took %f seconds to complete" % (dt))
 
-        return mask, mask_inv, mean_pxls
+        return mask, mask_inv, mean_pxls, display_windows
 
     """
     ============================================================================

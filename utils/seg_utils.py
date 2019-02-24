@@ -477,15 +477,16 @@ def is_horizon_present(img, nrows=10, verbose=False, flag_plot=False):
 	return flag
 
 
-def strip_image(_img, nstrips=48, horizontal_strips=True):
-	h,w,c = _img.shape
+def strip_image(_img, nstrips=48, horizontal_strips=True, verbose=False):
+	h,w = _img.shape[:2]
 
 	if horizontal_strips == True:
 		strip_widths = h // nstrips
-		strips = [_img[(strip_number*strip_widths):((strip_number+1)*strip_widths-1), :] for strip_number in range(nstrips)]
+		strips = [_img[(strip_number*strip_widths):(strip_number+1)*(strip_widths), :] for strip_number in range(nstrips)]
 	else:
 		strip_widths = w // nstrips
-		strips = [_img[:, (strip_number*strip_widths):((strip_number+1)*strip_widths-1)] for strip_number in range(nstrips)]
+		strips = [_img[:, (strip_number*strip_widths):(strip_number+1)*(strip_widths)] for strip_number in range(nstrips)]
+	if(verbose): print("[strip_image] --- todo")
 	return strips
 
 

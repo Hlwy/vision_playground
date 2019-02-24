@@ -5,20 +5,12 @@
 # 	TODO
 # Current Recommended Usage: (in terminal)
 # 	TODO
-import utils as ut
-import filter_utils as fut
-import seg_utils as sut
-import contour_utils as contUtils
-
-from matplotlib import pyplot as plt
-from sklearn import linear_model, datasets, neighbors
-# from sklearn.neighbors import NearestNeighbors
-
+import os, sys, csv, fnmatch
+import math, random
 import numpy as np
-import os
 import cv2
-import math
-import random
+from matplotlib import pyplot as plt
+
 
 def find_lowest_windows(img_left,img_right,line_left,line_right,midpointL=None,midpointR=None, window_size=[30,30], flag_beginning=True,verbose=False):
 	lineL = np.array(line_left); lineR = np.array(line_right)
@@ -348,3 +340,20 @@ def slide_window_left(img,location,size=[30,30],threshold=400,display=None, verb
 	if flag_show == True:
 		cv2.imshow("Sliding Window Left",display_windows)
 	return x_current
+
+
+def slide_window(center, ):
+	# Slide window from previousy found center (Clip at image edges)
+	# Update vertical [Y] window edges
+	if(yk - dWy >= 0): wy_low = yk - dWy
+	else: wy_low = 0
+
+	if(yk + dWy <= h): wy_high = yk + dWy
+	else: wy_high = h
+
+	# Update horizontal [X] window edges
+	if(xk - dWx >= 0): wx_low = xk - dWx
+	else: wx_low = 0
+
+	if(xk + dWx <= w): wx_high = xk + dWx
+	else: wx_high = w
