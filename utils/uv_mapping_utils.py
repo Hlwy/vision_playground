@@ -298,12 +298,12 @@ def obstacle_search(_vmap, x_limits, pixel_thresholds=(1,30), window_size=None, 
 """
 
 def find_obstacles(vmap, dLims, xLims, search_thresholds = (3,30), verbose=False):
-	obs = []
+	obs = []; windows = []
 	nObs = len(dLims)
 	for i in range(nObs):
 		xs = xLims[i]
 		ds = dLims[i]
-		ys,_,_ = obstacle_search(vmap, ds, search_thresholds)
+		ys,ws,_ = obstacle_search(vmap, ds, search_thresholds)
 		if(len(ys) <= 0):
 			if(verbose): print("[INFO] Found obstacle with zero height. Skipping...")
 		elif(ys[0] == ys[1]):
@@ -313,7 +313,8 @@ def find_obstacles(vmap, dLims, xLims, search_thresholds = (3,30), verbose=False
 				(xs[0],ys[0]),
 				(xs[1],ys[1])
 			])
-	return obs, len(obs)
+			windows.append(ws)
+	return obs, len(obs), windows
 
 """
 ===============================================================================
@@ -361,7 +362,7 @@ def find_contours(_umap, threshold = 30.0, threshold_method = "perimeter", offse
 	Abstract a mask image for filtering out the ground from a V-Map
 ============================================================================
 """
-def get_vmap_mask(vmap, threshold=20, maxStep=14, deltas=(0,20), mask_size = [10,30], window_size = [10,30], draw_method=0, verbose=False, timing=False):
+def get_vmap_mask(vmap, threshold=20, maxStep=14, deltas=(0,20), mask_size = [10,30], window_size = [10,30], draw_method=1, verbose=False, timing=False):
 	flag_done = False
 	count = 0 ; dt = 0
 	good_inds = []; mean_pxls = []; windows = []; masks = []
@@ -449,18 +450,20 @@ def get_vmap_mask(vmap, threshold=20, maxStep=14, deltas=(0,20), mask_size = [10
 
 	# ==========================================================================
 	if(draw_method == 1):
-		ploty = np.linspace(0, mean_pxls[-1,0])
-		try: # Try fitting polynomial nonzero data
-			fit = np.poly1d(np.polyfit(mean_pxls[:,0],mean_pxls[:,1], 3))
-			# Generate x and y values for plotting
-			plotx = fit(ploty)
-		except:
-			print("ERROR: Function 'polyfit' failed!")
-			fit = [0, 0]; plotx = [0, 0]
-		xs = np.asarray(ploty,dtype=np.int32)
-		ys = np.asarray(plotx,dtype=np.int32)
-		pts = np.vstack(([xs],[ys])).transpose()
-		cv2.polylines(black, [pts], 0, (255,255,255),5)
+		# ploty = np.linspace(0, mean_pxls[-1,0])
+		# try: # Try fitting polynomial nonzero data
+		# 	fit = np.poly1d(np.polyfit(mean_pxls[:,0],mean_pxls[:,1], 3))
+		# 	plotx = fit(ploty) # Generate x and y values for plotting
+		# except:
+		# 	print("ERROR: Function 'polyfit' failed!")
+		# 	fit = [0, 0]; plotx = [0, 0]
+		# xs = np.asarray(ploty,dtype=np.int32)
+		# ys = np.asarray(plotx,dtype=np.int32)
+		# pts = np.vstack(([xs],[ys])).transpose()
+
+		pts = cv2.approxPolyDP(mean_pxls,3,0)
+		# cv2.polylines(tmpVmap, [vs], 0, (255,0,255),20)
+		cv2.polylines(black, [pts], 0, (255,255,255),20)
 	else:
 		for mask in masks:
 			cv2.rectangle(black,mask[0],mask[1],(255,255,255), cv2.FILLED)
@@ -476,7 +479,7 @@ def get_vmap_mask(vmap, threshold=20, maxStep=14, deltas=(0,20), mask_size = [10
 		dt = t1 - t0
 		print("\t[get_vmap_mask] --- Took %f seconds to complete" % (dt))
 
-	return mask, mask_inv, mean_pxls, dt
+	return mask, mask_inv, mean_pxls, windows, dt
 
 """
 ===============================================================================
@@ -513,8 +516,9 @@ def uv_pipeline(_img, timing=True, flag_displays=False):
 	# ==========================================================================
 
 	stripsU = strip_image(raw_umap, nstrips=4)
+	# _, stripU1 = cv2.threshold(stripsU[0], 14, 255,cv2.THRESH_BINARY)
 	_, stripU1 = cv2.threshold(stripsU[0], 7, 255,cv2.THRESH_BINARY)
-	_, stripU2 = cv2.threshold(stripsU[1], 20, 255,cv2.THRESH_BINARY)
+	_, stripU2 = cv2.threshold(stripsU[1], 25, 255,cv2.THRESH_BINARY)
 	_, stripU3 = cv2.threshold(stripsU[2], 30, 255,cv2.THRESH_BINARY)
 	_, stripU4 = cv2.threshold(stripsU[3], 40, 255,cv2.THRESH_BINARY)
 
@@ -526,7 +530,8 @@ def uv_pipeline(_img, timing=True, flag_displays=False):
 
 	kernel = cv2.getStructuringElement(cv2.MORPH_RECT,(10,2))
 	stripU1 = cv2.morphologyEx(stripU1, cv2.MORPH_CLOSE, kernel)
-	stripU2 = cv2.morphologyEx(stripU2, cv2.MORPH_CLOSE, kernel)
+	stripU2 = cv2.morphologyEx(stripU2, cv2.MORPH_OPEN, kernel)
+	# stripU3 = cv2.morphologyEx(stripU3, cv2.MORPH_CLOSE, kernel)
 
 	kernelD = cv2.getStructuringElement(cv2.MORPH_RECT,(50,5))
 	deadzone_mask = cv2.morphologyEx(deadzone_mask, cv2.MORPH_CLOSE, kernelD)
@@ -534,7 +539,7 @@ def uv_pipeline(_img, timing=True, flag_displays=False):
 	# ==========================================================================
 	fCnts1 = find_contours(stripU1, 55.0, offset=(0,0))
 	fCnts2 = find_contours(stripU2, 100.0, offset=(0,hUs))
-	fCnts3 = find_contours(stripU3, 40.0, offset=(0,hUs*2))
+	fCnts3 = find_contours(stripU3, 80.0, offset=(0,hUs*2))
 	fCnts4 = find_contours(stripU4, 40.0, offset=(0,hUs*3))
 	filtered_contours = fCnts1 + fCnts2 + fCnts3 + fCnts4
 	xLims, dLims, _ = extract_contour_bounds(filtered_contours)
@@ -549,7 +554,7 @@ def uv_pipeline(_img, timing=True, flag_displays=False):
 	_, stripV4 = cv2.threshold(stripsV[3], 40, 255,cv2.THRESH_BINARY)
 	newV = np.concatenate((stripV1,stripV2,stripV3,stripV4), axis=1)
 
-	mask, maskInv,_,_ = get_vmap_mask(newV)
+	mask, maskInv,mPxls, ground_wins,_ = get_vmap_mask(newV, maxStep = 15)
 	vmap = cv2.bitwise_and(newV,newV,mask=maskInv)
 
 	# =========================================================================
@@ -561,7 +566,7 @@ def uv_pipeline(_img, timing=True, flag_displays=False):
 
 	# ==========================================================================
 	print("[INFO] Beginning Obstacle Search....")
-	obs, nObs = find_obstacles(vmap, dLims, xLims)
+	obs, nObs, windows = find_obstacles(vmap, dLims, xLims)
 	# =========================================================================
 	if(timing):
 		t1 = time.time()
@@ -576,12 +581,23 @@ def uv_pipeline(_img, timing=True, flag_displays=False):
 		newVdisp = np.concatenate((stripV1,borders,stripV2,borders,stripV3,borders,stripV4), axis=1)
 
 		disp_cnts = cv2.cvtColor(np.copy(umap), cv2.COLOR_GRAY2BGR)
-		for cnt in fCnts:
+		for cnt in filtered_contours:
 			cv2.drawContours(disp_cnts, [cnt], 0, (255,0,0), 2)
 
-		plt.figure(1)
-		plt.imshow(overlay)
-		plt.show()
+		disp_wins = cv2.cvtColor(np.copy(vmap), cv2.COLOR_GRAY2BGR)
+		for wins in windows:
+			for win in wins:
+				cv2.rectangle(disp_wins,win[0],win[1],(255,255,0), 1)
+
+		for pxl in mPxls:
+			cv2.circle(disp_wins,(pxl[0],pxl[1]),2,(255,0,255),-1)
+
+		disp_ground = cv2.cvtColor(np.copy(vmap), cv2.COLOR_GRAY2BGR)
+		for win in ground_wins:
+			cv2.rectangle(disp_ground,win[0],win[1],(255,255,0), 1)
+		# plt.figure(1)
+		# plt.imshow(overlay)
+		# plt.show()
 
 		plt.figure(2)
 		plt.imshow(newVdisp)
@@ -603,8 +619,5 @@ def uv_pipeline(_img, timing=True, flag_displays=False):
 		plt.imshow(disp_ground)
 		plt.show()
 
-		plt.figure(0)
-		plt.imshow(disp_obstacles)
-		plt.show()
 
-	return umap, vmap, img, obs, nObs, dt
+	return umap, vmap, img, obs, nObs, mPxls,newV, mask, maskInv, dt
