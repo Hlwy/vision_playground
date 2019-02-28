@@ -41,7 +41,8 @@ class VBOATS:
         self.dmax = 256
         self.window_size = [10,30]
         self.mask_size = [20,40]
-
+        self.dead_x = 2
+        self.dead_y = 10
         # Counters
         self.nObs = 0
 
@@ -398,7 +399,7 @@ class VBOATS:
         img = cv2.morphologyEx(img, cv2.MORPH_CLOSE, kernelI)
 
         h, w = img.shape[:2]
-        dead_x = 2; dead_y = 10
+        dead_x = self.dead_x; dead_y = self.dead_y
 
         raw_umap, raw_vmap, dt = self.get_uv_map(img)
         self.umap_raw = np.copy(raw_umap)
