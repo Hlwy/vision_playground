@@ -26,10 +26,12 @@ class VBOATS:
 
         self.xBounds = []
         self.yBounds = []
+        self.dbounds = []
         self.disparityBounds = []
 
         self.filtered_contours = []
         self.obstacles = []
+        self.obstacles_umap = []
         self.ground_pxls = []
 
         self.windows_obstacles = []
@@ -159,7 +161,7 @@ class VBOATS:
     ============================================================================
     """
     def find_obstacles(self, vmap, dLims, xLims, search_thresholds = (3,30), verbose=False):
-        obs = []; windows = []; ybounds = []
+        obs = []; obsUmap = []; windows = []; ybounds = []; dBounds = []
         nObs = len(dLims)
         for i in range(nObs):
             xs = xLims[i]
@@ -175,8 +177,13 @@ class VBOATS:
                     (xs[0],ys[0]),
                     (xs[1],ys[1])
                 ])
+                obsUmap.append([
+                    (xs[0],ds[0]),
+                    (xs[1],ds[1])
+                ])
                 windows.append(ws)
-        return obs, ybounds, windows, len(obs)
+                dBounds.append(ds)
+        return obs, obsUmap, ybounds, dBounds, windows, len(obs)
 
     """
     ============================================================================
@@ -388,7 +395,7 @@ class VBOATS:
     	                       Entire pipeline
     ============================================================================
     """
-    def pipeline(self, _img, threshU1=7, threshU2=20,threshV2=70, timing=True):
+    def pipeline(self, _img, threshU1=7, threshU2=20,threshV2=70, timing=False):
         dt = 0
         if(timing): t0 = time.time()
         # =========================================================================
@@ -506,8 +513,8 @@ class VBOATS:
         self.vmap_processed = np.copy(vmap)
         # =========================================================================
 
-        print("[INFO] Beginning Obstacle Search....")
-        obs, ybounds, windows, nObs = self.find_obstacles(vmap, dLims, xLims)
+        # print("[INFO] Beginning Obstacle Search....")
+        obs, obsU, ybounds, dbounds, windows, nObs = self.find_obstacles(vmap, dLims, xLims)
 
         # =========================================================================
         if(timing):
@@ -517,7 +524,9 @@ class VBOATS:
 
         self.nObs = nObs
         self.obstacles = obs
+        self.obstacles_umap = obsU
         self.yBounds = ybounds
+        self.dbounds = dbounds
         self.ground_pxls = mPxls
         self.windows_obstacles = windows
         self.windows_ground = ground_wins
@@ -597,7 +606,9 @@ class VBOATS:
     ============================================================================
     """
     def read_image(self,_img):
-        img = cv2.imread(_img,cv2.IMREAD_GRAYSCALE)
+        if(type(_img) is np.ndarray): img = _img
+        else: img = cv2.imread(_img,cv2.IMREAD_GRAYSCALE)
+
         # Get stats on original image
         self.h, self.w = img.shape[:2]
         self.dmax = np.max(img) + 1
