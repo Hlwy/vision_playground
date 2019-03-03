@@ -1,66 +1,96 @@
-import cv2, time
 import numpy as np
+import cv2, time, pprint
 import pyrealsense2 as rs
 import matplotlib.pyplot as plt
 
-flag_save = 0
+pp = pprint.PrettyPrinter(indent=4)
 
-# Configure depth and color streams
-if flag_save:
-    fourcc = cv2.VideoWriter_fourcc('M','J','P','G')
-    writerRGB = cv2.VideoWriter("realsense_rgb.avi", fourcc, 60,(640, 480), True)
-    writerD = cv2.VideoWriter("realsense_depth.avi", fourcc, 60,(640, 480), True)
+class CameraD415(object):
 
-pipeline = rs.pipeline()
-config = rs.config()
-config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
-config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
+    def __init__(self):
+        self.fps = 60
+        self.flag_save = 0
+        self.frames = None
 
-# Start streaming
-profile = pipeline.start(config)
-# time.sleep(2.0)
+        # Attempt to establish camera configuration
+        try:
+            self.config = rs.config()
+            self.config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, self.fps)
+            self.config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, self.fps)
+        except:
+            self.config = None
+            print("[ERROR] Could not establish CameraD415 Config!")
 
-try:
-    while True:
+        # Attempt to establish camera pipeline
+        try: self.pipeline = rs.pipeline()
+        except:
+            self.pipeline = None
+            print("[ERROR] Could not establish CameraD415 Pipeline!")
 
-        # Wait for a coherent pair of frames: depth and color
-        frames = pipeline.wait_for_frames()
-        depth_frame = frames.get_depth_frame()
-        color_frame = frames.get_color_frame()
-        if not depth_frame or not color_frame:
-            continue
+        # Attempt to start streaming device
+        try: self.profile = self.pipeline.start(self.config)
+        except:
+            self.profile = None
+            print("[ERROR] Could not establish CameraD415 Profile!")
 
-        # Convert images to numpy arrays
-        color_image = np.asanyarray(color_frame.get_data())
-        depth_image = np.asanyarray(depth_frame.get_data())
-        # norm_depth_image = cv2.normalize(depth_image, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
-        # norm_depth_image = cv2.cvtColor(norm_depth_image, cv2.COLOR_GRAY2RGB)
-        norm_depth_image = cv2.convertScaleAbs(depth_image, alpha=0.03)
-        # Apply colormap on depth image (image must be converted to 8-bit per pixel first)
-        depth_colormap = cv2.applyColorMap(cv2.convertScaleAbs(depth_image, alpha=0.03), cv2.COLORMAP_JET)
+        self.dscale = self.get_depth_scale()
 
-        # Stack both images horizontally
-        images = np.hstack((color_image, depth_colormap))
-        depth_scale = profile.get_device().first_depth_sensor().get_depth_scale()
-        # print("Depth Scale: %f" % depth_scale)
-        # Show images
-        dImg = depth_image*depth_scale
-        dRgb = color_image
+        if(self.flag_save): # Configure depth and color streams
+            fourcc = cv2.VideoWriter_fourcc('M','J','P','G')
+            self.writerD = cv2.VideoWriter("realsense_depth.avi", fourcc, 60,(640, 480), True)
+            self.writerRGB = cv2.VideoWriter("realsense_rgb.avi", fourcc, 60,(640, 480), True)
+        else:
+            self.writerD = None
+            self.writerRGB = None
 
-        if flag_save:
-            writerRGB.write(dRgb)
-            writerD.write(depth_colormap)
 
-        cv2.namedWindow('Disparity', cv2.WINDOW_NORMAL)
-        cv2.namedWindow('RealSense', cv2.WINDOW_NORMAL)
-        cv2.imshow('RealSense', images)
-        cv2.imshow('Disparity', norm_depth_image)
-        cv2.waitKey(1)
+    def __del__(self):
+        print("[INFO] Closing CameraR200 object")
+        if(self.pipeline is not None): self.pipeline.stop()
+        if(self.writerD is not None): self.writerD.release()
+        if(self.writerRGB is not None): self.writerRGB.release()
 
-finally:
+    def get_depth_scale(self):
+        if(self.profile is not None):
+            depth_scale = self.profile.get_device().first_depth_sensor().get_depth_scale()
+        else: depth_scale = -1
+        return depth_scale
 
-    # Stop streaming
-    pipeline.stop()
-    if flag_save:
-        writerRGB.release()
-        writerD.release()
+    def read(self):
+        self.frames = self.pipeline.wait_for_frames()
+        rgb = self.get_rgb_image()
+        depth = self.get_depth_image()
+        return rgb, depth
+
+    def get_rgb_image(self):
+        if(self.frames is not None):
+            frame = self.frames.get_color_frame()
+            img = np.asanyarray(frame.get_data())
+        else:
+            img = None
+        return img
+
+    def get_depth_image(self):
+        if(self.frames is not None):
+            frame = self.frames.get_depth_frame()
+            img = np.asanyarray(frame.get_data())
+        else:
+            img = None
+        return img
+
+    def loop(self):
+        while True:
+            rgb, depth = self.read()
+            if((rgb is None) or (depth is None)):
+                continue
+
+            norm_depth_image = cv2.convertScaleAbs(depth, alpha=0.03)
+            # Apply colormap on depth image (image must be converted to 8-bit per pixel first)
+            depth_colormap = cv2.applyColorMap(cv2.convertScaleAbs(depth, alpha=0.03), cv2.COLORMAP_JET)
+
+            # Stack both images horizontally
+            images = np.hstack((rgb, depth_colormap))
+
+            # Show images
+            dImg = depth*self.depth_scale
+            dRgb = rgb

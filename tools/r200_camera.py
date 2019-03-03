@@ -84,12 +84,10 @@ class CameraR200(object):
         return rgb, depth
 
     def get_rgb_image(self):
-        img = self.dev.color
-        return img
+        return self.dev.color
 
     def get_depth_image(self):
-        img = self.dev.depth
-        return img
+        return self.dev.depth
 
     def loop(self, verbose=True):
         while True:
