@@ -12,6 +12,11 @@ class CameraR200(object):
         self.flag_save = 0
         self.rgb_img = None
         self.depth_img = None
+        self.count = 0
+        self.last = time.time()
+        self.smoothing = 0.9
+        self.fps_smooth = 60
+
 
         # Attempt to establish camera service
         try: self.srv = pyrs.Service()
@@ -42,8 +47,8 @@ class CameraR200(object):
         if(self.writerD is not None): self.writerD.release()
         if(self.writerRGB is not None): self.writerRGB.release()
 
-    def close(self):
-        self.__del__()
+    # def close(self):
+    #     self.__del__()
 
     def apply_configuration(self, lr_exposure=100.0, lr_gain=137.0, ivcam_preset=0):
         try:  # set custom gain/exposure values to obtain good depth image
@@ -85,3 +90,34 @@ class CameraR200(object):
     def get_depth_image(self):
         img = self.dev.depth
         return img
+
+    def loop(self, verbose=True):
+        while True:
+            self.count += 1
+            if(self.count % 10) == 0:
+                now = time.time()
+                dt = now - self.last
+                fps = 10/dt
+                self.fps_smooth = (self.fps_smooth * self.smoothing) + (fps * (1.0-self.smoothing))
+                self.last = now
+                if(verbose): print("[%.3f] R200 FPS = %.2f" % (now,self.fps_smooth))
+
+            c, d_raw = self.read()
+
+            h,w,ch = c.shape
+            d_raw = d_raw * self.dev.depth_scale
+
+            d_raw = d_raw.astype(np.uint8)
+            norm_image = cv2.normalize(d_raw, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
+            norm_image = cv2.cvtColor(norm_image, cv2.COLOR_GRAY2RGB)
+            depth_raw = cv2.applyColorMap(d_raw, cv2.COLORMAP_RAINBOW)
+
+            depth = cv2.medianBlur(d_raw, 5)
+            depth = cv2.applyColorMap(depth, cv2.COLORMAP_RAINBOW)
+            blank = np.zeros(c.shape, np.uint8)
+
+            cd1 = np.concatenate((c, norm_image), axis=1)
+            cd2 = np.concatenate((depth_raw,depth), axis=1)
+            cd = np.concatenate((cd1, cd2), axis=0)
+
+            cv2.putText(cd, str(self.fps_smooth)[:4], (0, 50), cv2.FONT_HERSHEY_SIMPLEX, 2, (255, 255, 255))
