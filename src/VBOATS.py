@@ -595,9 +595,27 @@ class VBOATS:
         #     cv2.rectangle(disp_ground,win[0],win[1],(255,255,0), 1)
 
         comp = np.concatenate((dispV1,borders2,dispV2), axis=1)
-
         return dispV1, dispV2, comp
 
+
+    def calculate_distance(self, umap, xs, ds, ys, focal=462.13797, baseline=55, dscale=0.001):
+        nonzero = umap.nonzero()
+        nonzeroy = np.array(nonzero[0])
+        nonzerox = np.array(nonzero[1])
+
+        good_inds = ((nonzeroy >= ds[0]) & (nonzeroy < ds[1]) &
+                     (nonzerox >= xs[0]) &  (nonzerox < xs[1])).nonzero()[0]
+
+        xmean = np.int(np.mean(nonzerox[good_inds]))
+        dmean = np.mean(nonzeroy[good_inds])
+        # dmean = np.mean(ds)
+        ymean = np.mean(ys)
+
+        dist = ((focal*baseline)/dmean)*dscale
+        x = (dist*xmean)/focal
+        y = (dist*ymean)/focal
+        print("Distance, X, Y, Dmean: %.3f, %.3f, %.3f, %.3f" % (dist, x,y, dmean))
+        return dist, x,y, dmean
 
     """
     ============================================================================

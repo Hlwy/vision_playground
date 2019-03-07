@@ -5,6 +5,58 @@ import matplotlib.pyplot as plt
 
 pp = pprint.PrettyPrinter(indent=4)
 
+
+# device_manager = DeviceManager(rs.context(), rs_config)
+# device_manager.enable_all_devices()
+# for frame in range(dispose_frames_for_stablisation):
+# 			frames = device_manager.poll_frames()
+# intrinsics_devices = device_manager.get_device_intrinsics(frames)
+
+
+# def get_device_intrinsics(self, frames):
+#         """
+#         Get the intrinsics of the imager using its frame delivered by the realsense device
+#         Parameters:
+#         -----------
+#         frames : rs::frame
+#                   The frame grabbed from the imager inside the Intel RealSense for which the intrinsic is needed
+#         Return:
+#         -----------
+#         device_intrinsics : dict
+#         keys  : serial
+#                 Serial number of the device
+#         values: [key]
+#                 Intrinsics of the corresponding device
+#         """
+#         device_intrinsics = {}
+#         for (serial, frameset) in frames.items():
+#             device_intrinsics[serial] = {}
+#             for key, value in frameset.items():
+#                 device_intrinsics[serial][key] = value.get_profile().as_video_stream_profile().get_intrinsics()
+#         return device_intrinsics
+#
+#     def get_depth_to_color_extrinsics(self, frames):
+#         """
+#         Get the extrinsics between the depth imager 1 and the color imager using its frame delivered by the realsense device
+#         Parameters:
+#         -----------
+#         frames : rs::frame
+#                   The frame grabbed from the imager inside the Intel RealSense for which the intrinsic is needed
+#         Return:
+#         -----------
+#         device_intrinsics : dict
+#         keys  : serial
+#                 Serial number of the device
+#         values: [key]
+#                 Extrinsics of the corresponding device
+#         """
+#         device_extrinsics = {}
+#         for (serial, frameset) in frames.items():
+#             device_extrinsics[serial] = frameset[
+#                 rs.stream.depth].get_profile().as_video_stream_profile().get_extrinsics_to(
+#                 frameset[rs.stream.color].get_profile())
+#         return device_extrinsics
+
 class CameraD415(object):
 
     def __init__(self):
