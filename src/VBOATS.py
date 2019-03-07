@@ -1,6 +1,8 @@
-import cv2, time
 import numpy as np
+import os, sys, cv2, time
 from matplotlib import pyplot as plt
+
+sys.path.append(os.path.abspath(os.path.join('..', '')))
 
 from utils.seg_utils import *
 
