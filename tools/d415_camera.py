@@ -5,63 +5,10 @@ import matplotlib.pyplot as plt
 
 pp = pprint.PrettyPrinter(indent=4)
 
-
-# device_manager = DeviceManager(rs.context(), rs_config)
-# device_manager.enable_all_devices()
-# for frame in range(dispose_frames_for_stablisation):
-# 			frames = device_manager.poll_frames()
-# intrinsics_devices = device_manager.get_device_intrinsics(frames)
-
-
-# def get_device_intrinsics(self, frames):
-#         """
-#         Get the intrinsics of the imager using its frame delivered by the realsense device
-#         Parameters:
-#         -----------
-#         frames : rs::frame
-#                   The frame grabbed from the imager inside the Intel RealSense for which the intrinsic is needed
-#         Return:
-#         -----------
-#         device_intrinsics : dict
-#         keys  : serial
-#                 Serial number of the device
-#         values: [key]
-#                 Intrinsics of the corresponding device
-#         """
-#         device_intrinsics = {}
-#         for (serial, frameset) in frames.items():
-#             device_intrinsics[serial] = {}
-#             for key, value in frameset.items():
-#                 device_intrinsics[serial][key] = value.get_profile().as_video_stream_profile().get_intrinsics()
-#         return device_intrinsics
-#
-#     def get_depth_to_color_extrinsics(self, frames):
-#         """
-#         Get the extrinsics between the depth imager 1 and the color imager using its frame delivered by the realsense device
-#         Parameters:
-#         -----------
-#         frames : rs::frame
-#                   The frame grabbed from the imager inside the Intel RealSense for which the intrinsic is needed
-#         Return:
-#         -----------
-#         device_intrinsics : dict
-#         keys  : serial
-#                 Serial number of the device
-#         values: [key]
-#                 Extrinsics of the corresponding device
-#         """
-#         device_extrinsics = {}
-#         for (serial, frameset) in frames.items():
-#             device_extrinsics[serial] = frameset[
-#                 rs.stream.depth].get_profile().as_video_stream_profile().get_extrinsics_to(
-#                 frameset[rs.stream.color].get_profile())
-#         return device_extrinsics
-
 class CameraD415(object):
-
-    def __init__(self):
+    def __init__(self, flag_save=0):
         self.fps = 60
-        self.flag_save = 0
+        self.flag_save = flag_save
         self.frames = None
 
         # Attempt to establish camera configuration
@@ -86,21 +33,41 @@ class CameraD415(object):
             print("[ERROR] Could not establish CameraD415 Profile!")
 
         self.dscale = self.get_depth_scale()
+        self.intrinsics = self.get_intrinsics()
+        self.extrinsics = self.get_extrinsics()
 
         if(self.flag_save): # Configure depth and color streams
             fourcc = cv2.VideoWriter_fourcc('M','J','P','G')
-            self.writerD = cv2.VideoWriter("realsense_depth.avi", fourcc, 60,(640, 480), True)
-            self.writerRGB = cv2.VideoWriter("realsense_rgb.avi", fourcc, 60,(640, 480), True)
+            self.writerD = cv2.VideoWriter("realsense_d415_depth.avi", fourcc, self.fps,(640, 480), True)
+            self.writerRGB = cv2.VideoWriter("realsense_d415_rgb.avi", fourcc, self.fps,(640, 480), True)
         else:
             self.writerD = None
             self.writerRGB = None
 
 
     def __del__(self):
-        print("[INFO] Closing CameraR200 object")
+        print("[INFO] Closing CameraD415 object")
         if(self.pipeline is not None): self.pipeline.stop()
         if(self.writerD is not None): self.writerD.release()
         if(self.writerRGB is not None): self.writerRGB.release()
+
+    def get_intrinsics(self):
+        frames = self.pipeline.wait_for_frames()
+        device_intrinsics = {}
+        for (serial, frameset) in frames.items():
+            device_intrinsics[serial] = {}
+            for key, value in frameset.items():
+                device_intrinsics[serial][key] = value.get_profile().as_video_stream_profile().get_intrinsics()
+        return device_intrinsics
+
+    def get_extrinsics(self):
+        frames = self.pipeline.wait_for_frames()
+        device_extrinsics = {}
+        for (serial, frameset) in frames.items():
+            device_extrinsics[serial] = frameset[
+                rs.stream.depth].get_profile().as_video_stream_profile().get_extrinsics_to(
+                frameset[rs.stream.color].get_profile())
+        return device_extrinsics
 
     def get_depth_scale(self):
         if(self.profile is not None):
@@ -136,13 +103,7 @@ class CameraD415(object):
             if((rgb is None) or (depth is None)):
                 continue
 
-            norm_depth_image = cv2.convertScaleAbs(depth, alpha=0.03)
-            # Apply colormap on depth image (image must be converted to 8-bit per pixel first)
-            depth_colormap = cv2.applyColorMap(cv2.convertScaleAbs(depth, alpha=0.03), cv2.COLORMAP_JET)
-
-            # Stack both images horizontally
-            images = np.hstack((rgb, depth_colormap))
-
-            # Show images
-            dImg = depth*self.depth_scale
-            dRgb = rgb
+            if(self.writerD is not None):
+                self.writerD.write(depth)
+            if(self.writerRGB is not None):
+                self.writerRGB.write(rgb)
