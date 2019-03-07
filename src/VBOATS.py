@@ -614,6 +614,8 @@ class VBOATS:
         ymean = np.mean(ys)
 
         dist = ((focal*baseline)/dmean)*dscale
+        # float x = (pixel[0] - intrin->ppx) / intrin->fx;
+        # float y = (pixel[1] - intrin->ppy) / intrin->fy;
         x = (dist*xmean)/focal
         y = (dist*ymean)/focal
         print("Distance, X, Y, Dmean: %.3f, %.3f, %.3f, %.3f" % (dist, x,y, dmean))

@@ -43,6 +43,10 @@ class CameraD415(object):
         else:
             self.writerD = None
             self.writerRGB = None
+            print("[ERROR] Could not establish CameraD415 VideoWriter's!")
+
+
+        self.dmax_avg = self.calculate_statistics()
 
 
     def __del__(self):
@@ -54,19 +58,15 @@ class CameraD415(object):
     def get_intrinsics(self):
         frames = self.pipeline.wait_for_frames()
         device_intrinsics = {}
-        for (serial, frameset) in frames.items():
-            device_intrinsics[serial] = {}
-            for key, value in frameset.items():
-                device_intrinsics[serial][key] = value.get_profile().as_video_stream_profile().get_intrinsics()
+        for stream in self.profile.get_streams():
+            skey = stream.stream_name().lower()
+            device_intrinsics[skey] = stream.as_video_stream_profile().get_intrinsics()
         return device_intrinsics
 
     def get_extrinsics(self):
         frames = self.pipeline.wait_for_frames()
-        device_extrinsics = {}
-        for (serial, frameset) in frames.items():
-            device_extrinsics[serial] = frameset[
-                rs.stream.depth].get_profile().as_video_stream_profile().get_extrinsics_to(
-                frameset[rs.stream.color].get_profile())
+        streams = self.profile.get_streams()
+        device_extrinsics = streams[0].as_video_stream_profile().get_extrinsics_to(streams[1])
         return device_extrinsics
 
     def get_depth_scale(self):
@@ -92,7 +92,7 @@ class CameraD415(object):
     def get_depth_image(self):
         if(self.frames is not None):
             frame = self.frames.get_depth_frame()
-            img = np.asanyarray(frame.get_data())
+            img = np.asanyarray(frame.get_data(),dtype=np.float32)
         else:
             img = None
         return img
@@ -102,8 +102,34 @@ class CameraD415(object):
             rgb, depth = self.read()
             if((rgb is None) or (depth is None)):
                 continue
-
+            tmp = depth/self.dmax_avg
+            depth = np.uint8(tmp*255)
+            depth = cv2.cvtColor(depth,cv2.COLOR_GRAY2BGR)
+            # depth = np.uint8(depth)
             if(self.writerD is not None):
                 self.writerD.write(depth)
             if(self.writerRGB is not None):
                 self.writerRGB.write(rgb)
+
+    def calculate_statistics(self, duration=10.0):
+        print("Calculating Average Max Disparity.....")
+        t0 = time.time()
+        sum, count = 0, 0
+        while True:
+            t1 = time.time()
+            dt = t1 - t0
+            if(dt<= duration):
+                _, depth = self.read()
+                if(depth is None): continue
+                sum += np.max(depth)
+                count+=1
+            else: break
+        avg = sum / float(count)
+        print("Average Max Disparity, Sum, Count: %.3f, %.3f, %d" % (avg,sum,count))
+        return avg
+
+if __name__ == '__main__':
+    cam = CameraD415(flag_save=1)
+    print("Looping...")
+    cam.loop()
+    print("Exiting...")
