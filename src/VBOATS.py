@@ -49,13 +49,10 @@ class VBOATS:
         self.dead_y = 10
         # Counters
         self.nObs = 0
-
-    """
-    ============================================================================
-    	Create the UV Disparity Mappings from a given depth (disparity) image
-    ============================================================================
-    """
     def get_uv_map(self, img, verbose=False, timing=False):
+        """ ===================================================================
+        Create the UV Disparity Mappings from a given depth (disparity) image
+        ==================================================================== """
         dt = 0
         if(timing): t0 = time.time()
         dmax = np.max(img) + 1
@@ -96,14 +93,10 @@ class VBOATS:
             print("\t[UV Mapping] --- Took %f seconds to complete" % (dt))
 
         return umap,vmap, dt
-
-
-    """
-    ============================================================================
-    	Attempt to find the horizontal bounds for detected contours
-    ============================================================================
-    """
     def extract_contour_bounds(self, cnts, verbose=False, timing=False):
+        """ ===================================================================
+        	Attempt to find the horizontal bounds for detected contours
+        ==================================================================== """
         dt = 0
         xBounds = []
         disparityBounds = []
@@ -123,14 +116,12 @@ class VBOATS:
             print("\t[extract_contour_bounds] --- Took %f seconds to complete" % (dt))
 
         return xBounds, disparityBounds, dt
-
-
-    """
-    ============================================================================
-    	Find contours in image and filter out those above a certain threshold
-    ============================================================================
-    """
     def find_contours(self, _umap, threshold = 30.0, threshold_method = "perimeter", offset=(0,0), debug=False):
+        """
+        ============================================================================
+        	Find contours in image and filter out those above a certain threshold
+        ============================================================================
+        """
         try: umap = cv2.cvtColor(_umap,cv2.COLOR_BGR2GRAY)
         except:
             umap = _umap
@@ -156,13 +147,12 @@ class VBOATS:
             print("[ERROR] find_contours --- Unsupported filtering method!")
 
         return filtered_contours
-
-    """
-    ============================================================================
-                    Find obstacles within a given V-Map
-    ============================================================================
-    """
     def find_obstacles(self, vmap, dLims, xLims, search_thresholds = (3,30), verbose=False):
+        """
+        ============================================================================
+                        Find obstacles within a given V-Map
+        ============================================================================
+        """
         obs = []; obsUmap = []; windows = []; ybounds = []; dBounds = []
         nObs = len(dLims)
         for i in range(nObs):
@@ -186,14 +176,13 @@ class VBOATS:
                 windows.append(ws)
                 dBounds.append(ds)
         return obs, obsUmap, ybounds, dBounds, windows, len(obs)
-
-    """
-    ============================================================================
-    	Attempt to find the y boundaries for potential obstacles found from
-    	the U-Map
-    ============================================================================
-    """
     def obstacle_search(self, _vmap, x_limits, pixel_thresholds=(1,30), window_size=None, verbose=False, timing=False):
+        """
+        ============================================================================
+        	Attempt to find the y boundaries for potential obstacles found from
+        	the U-Map
+        ============================================================================
+        """
         flag_done = False
         flag_found_start = False
         count = 0; nWindows = 0; dt = 0
@@ -280,14 +269,12 @@ class VBOATS:
             print("\t[obstacle_search] --- Took %f seconds to complete" % (dt))
 
         return yLims, windows, dt
-
-
-    """
-    ============================================================================
-    	Abstract a mask image for filtering out the ground from a V-Map
-    ============================================================================
-    """
     def get_vmap_mask(self, vmap, threshold=20, maxStep=14, deltas=(0,20), mask_size = [10,30], window_size = [10,30], draw_method=1, verbose=False, timing=False):
+        """
+        ============================================================================
+        	Abstract a mask image for filtering out the ground from a V-Map
+        ============================================================================
+        """
         flag_done = False
         count = 0; dt = 0
         good_inds = []; mean_pxls = []; windows = []; masks = []
@@ -532,15 +519,15 @@ class VBOATS:
         self.ground_pxls = mPxls
         self.windows_obstacles = windows
         self.windows_ground = ground_wins
-
         return 0
 
-    """
-    ============================================================================
-    	                      PLACEHOLDER
-    ============================================================================
-    """
+
     def umap_displays(self, border_color=(255,0,255)):
+        """
+        ============================================================================
+        	                      PLACEHOLDER
+        ============================================================================
+        """
         borderb = np.ones((1,self.w,3),dtype=np.uint8); borderb[:] = border_color
         borders = np.ones((self.h,1,3),dtype=np.uint8); borders[:] = border_color
         borderb2 = np.ones((1,self.w,3),dtype=np.uint8); borderb2[:] = (255,255,255)
@@ -564,7 +551,6 @@ class VBOATS:
         comp = np.concatenate((dispU1,borderb2,dispU2), axis=0)
 
         return dispU1, dispU2, comp
-
     def vmap_displays(self, border_color=(255,0,255)):
         borders = np.ones((self.h,1,3),dtype=np.uint8); borders[:] = border_color
         borders2 = np.ones((self.h,10,3),dtype=np.uint8); borders2[:] = (255,255,255)
@@ -598,8 +584,6 @@ class VBOATS:
 
         comp = np.concatenate((dispV1,borders2,dispV2), axis=1)
         return dispV1, dispV2, comp
-
-
     def calculate_distance(self, umap, xs, ds, ys, focal=462.13797, baseline=55, dscale=0.001):
         nonzero = umap.nonzero()
         nonzeroy = np.array(nonzero[0])
@@ -620,14 +604,13 @@ class VBOATS:
         y = (dist*ymean)/focal
         print("Distance, X, Y, Dmean: %.3f, %.3f, %.3f, %.3f" % (dist, x,y, dmean))
         return dist, x,y, dmean
-
-    """
-    ============================================================================
-        Load a depth image from the specified path only if the given path
-        is different from the previously used path
-    ============================================================================
-    """
     def read_image(self,_img):
+        """
+        ============================================================================
+            Load a depth image from the specified path only if the given path
+            is different from the previously used path
+        ============================================================================
+        """
         if(type(_img) is np.ndarray): img = _img
         else: img = cv2.imread(_img,cv2.IMREAD_GRAYSCALE)
 
