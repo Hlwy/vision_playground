@@ -55,7 +55,7 @@ class VBOATS:
         ==================================================================== """
         dt = 0
         if(timing): t0 = time.time()
-        dmax = np.max(img) + 1
+        dmax = np.uint8(np.max(img)) + 1
 
         # Determine stats for U and V map images
         h, w = img.shape[:2]
