@@ -584,26 +584,62 @@ class VBOATS:
 
         comp = np.concatenate((dispV1,borders2,dispV2), axis=1)
         return dispV1, dispV2, comp
-    def calculate_distance(self, umap, xs, ds, ys, focal=462.13797, baseline=55, dscale=0.001):
+    def calculate_distance(self, umap, xs, ds, ys, focal=[462.138,462.138],
+        baseline=0.055, dscale=0.001, pp=[320.551,232.202], dsbuffer=1,
+        use_principle_point=True, use_disparity_buffer=True, verbose=False):
+
         nonzero = umap.nonzero()
         nonzeroy = np.array(nonzero[0])
         nonzerox = np.array(nonzero[1])
+
+        if(use_disparity_buffer): ds[0] = ds[0] - dsbuffer
 
         good_inds = ((nonzeroy >= ds[0]) & (nonzeroy < ds[1]) &
                      (nonzerox >= xs[0]) &  (nonzerox < xs[1])).nonzero()[0]
 
         xmean = np.int(np.mean(nonzerox[good_inds]))
         dmean = np.mean(nonzeroy[good_inds])
-        # dmean = np.mean(ds)
         ymean = np.mean(ys)
+        z = dmean*(65535/255)*dscale
 
-        dist = ((focal*baseline)/dmean)*dscale
-        # float x = (pixel[0] - intrin->ppx) / intrin->fx;
-        # float y = (pixel[1] - intrin->ppy) / intrin->fy;
-        x = (dist*xmean)/focal
-        y = (dist*ymean)/focal
-        print("Distance, X, Y, Dmean: %.3f, %.3f, %.3f, %.3f" % (dist, x,y, dmean))
-        return dist, x,y, dmean
+        if use_principle_point:
+            px = pp[0]
+            py = pp[1]
+        else:
+            px = 0
+            py = 0
+
+        x = ((xmean - px)/focal[0])*z
+        y = ((ymean - py)/focal[1])*z
+        if(verbose): print("X, Y, Z: %.3f, %.3f, %.3f" % (x,y, z))
+
+        return x,y,z
+    def calculate_rotation_matrix(self,eulers):
+        r = eulers[0]; p = eulers[1]; y = eulers[2];
+        R11 = np.cos(p)*np.cos(y)
+        R12 = np.cos(p)*np.sin(y)
+        R13 = -np.sin(p)
+        R1 = [R11, R12, R13]
+
+        R21 = -(np.cos(r)*np.sin(y)) + (np.sin(r)*np.sin(p)*np.cos(y))
+        R22 = (np.cos(r)*np.cos(y)) + np.sin(r)*np.sin(p)*np.sin(y)
+        R23 = np.sin(r)*np.cos(p)
+        R2 = [R21,R22,R23]
+
+        R31 = (np.sin(r)*np.sin(y))+(np.cos(r)*np.sin(p)*np.cos(y))
+        R32 = -(np.sin(r)*np.cos(y)) + (np.cos(r)*np.sin(p)*np.sin(y))
+        R33 = np.cos(r)*np.cos(p)
+        R3 = [R31,R32,R33]
+
+        rotation = np.array([R1,R2,R3])
+        return rotation
+    def transform_pixel_to_world(self, rotation,pixel,translation, verbose=False):
+        Rinv = np.linalg.inv(rotation)
+        pos = np.dot(Rinv,pixel)
+        position = pos - translation
+        if(verbose): print("Projected Position (X,Y,Z): %s" % (', '.join(map(str, np.around(position,3)))) )
+        return position
+    
     def read_image(self,_img):
         """
         ============================================================================
