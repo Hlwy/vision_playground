@@ -602,18 +602,14 @@ class VBOATS:
         ymean = np.mean(ys)
         z = dmean*(65535/255)*dscale
 
-        if use_principle_point:
-            px = pp[0]
-            py = pp[1]
-        else:
-            px = 0
-            py = 0
+        if use_principle_point: px, py = pp[:2]
+        else: px = py = 0
 
         x = ((xmean - px)/focal[0])*z
         y = ((ymean - py)/focal[1])*z
         if(verbose): print("X, Y, Z: %.3f, %.3f, %.3f" % (x,y, z))
 
-        return x,y,z
+        return z,x,y
     def calculate_rotation_matrix(self,eulers):
         r = eulers[0]; p = eulers[1]; y = eulers[2];
         R11 = np.cos(p)*np.cos(y)
@@ -639,7 +635,7 @@ class VBOATS:
         position = pos - translation
         if(verbose): print("Projected Position (X,Y,Z): %s" % (', '.join(map(str, np.around(position,3)))) )
         return position
-    
+
     def read_image(self,_img):
         """
         ============================================================================

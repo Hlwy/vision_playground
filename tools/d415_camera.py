@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 pp = pprint.PrettyPrinter(indent=4)
 
 class CameraD415(object):
-    def __init__(self, flag_save=0):
+    def __init__(self, flag_save=0,use_statistics=0):
         self.fps = 60
         self.flag_save = flag_save
         self.frames = None
@@ -46,8 +46,8 @@ class CameraD415(object):
             print("[ERROR] Could not establish CameraD415 VideoWriter's!")
 
 
-        self.dmax_avg = self.calculate_statistics()
-
+        if(use_statistics): self.dmax_avg = self.calculate_statistics(duration=5.0)
+        else: self.dmax_avg = 65535
 
     def __del__(self):
         print("[INFO] Closing CameraD415 object")
@@ -129,7 +129,7 @@ class CameraD415(object):
         return avg
 
 if __name__ == '__main__':
-    cam = CameraD415(flag_save=1)
+    cam = CameraD415(flag_save=1,use_statistics=0)
     print("Looping...")
     cam.loop()
     print("Exiting...")
