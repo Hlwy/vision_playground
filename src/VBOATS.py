@@ -49,6 +49,8 @@ class VBOATS:
         self.dead_y = 10
         # Counters
         self.nObs = 0
+        # Flags
+        self.flag_simulation = False
     def get_uv_map(self, img, verbose=False, timing=False):
         """ ===================================================================
         Create the UV Disparity Mappings from a given depth (disparity) image
@@ -410,6 +412,7 @@ class VBOATS:
         cv2.rectangle(raw_vmap,(0,0),(dead_x, raw_vmap.shape[0]),(0,0,0), cv2.FILLED)
         cv2.rectangle(raw_vmap,(raw_vmap.shape[1]-dead_x,0),(raw_vmap.shape[1],raw_vmap.shape[0]),(0,0,0), cv2.FILLED)
         # =========================================================================
+        if(self.flag_simulation): _, raw_umap = cv2.threshold(raw_umap, 35, 255,cv2.THRESH_TOZERO)
         self.umap_deadzoned = np.copy(raw_umap)
         self.vmap_deadzoned = np.copy(raw_vmap)
         try:
@@ -607,9 +610,12 @@ class VBOATS:
 
         x = ((xmean - px)/focal[0])*z
         y = ((ymean - py)/focal[1])*z
-        if(verbose): print("X, Y, Z: %.3f, %.3f, %.3f" % (x,y, z))
 
-        return z,x,y
+        dist = np.sqrt(x*x+z*z)
+
+        if(verbose): print("X, Y, Z: %.3f, %.3f, %.3f" % (x,y, dist))
+
+        return dist,x,y,z
     def calculate_rotation_matrix(self,eulers):
         r = eulers[0]; p = eulers[1]; y = eulers[2];
         R11 = np.cos(p)*np.cos(y)
