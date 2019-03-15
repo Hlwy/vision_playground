@@ -415,6 +415,7 @@ class VBOATS:
         if(self.flag_simulation): _, raw_umap = cv2.threshold(raw_umap, 35, 255,cv2.THRESH_TOZERO)
         self.umap_deadzoned = np.copy(raw_umap)
         self.vmap_deadzoned = np.copy(raw_vmap)
+        _, raw_umap = cv2.threshold(raw_umap, 10, 255,cv2.THRESH_TOZERO)
         try:
             raw_umap = cv2.cvtColor(raw_umap,cv2.COLOR_GRAY2BGR)
             raw_vmap = cv2.cvtColor(raw_vmap,cv2.COLOR_GRAY2BGR)
@@ -423,6 +424,7 @@ class VBOATS:
         # ==========================================================================
         #							U-MAP Specific Functions
         # ==========================================================================
+
 
         stripsU = strip_image(raw_umap, nstrips=6)
         self.stripsU_raw = np.copy(stripsU)
@@ -433,6 +435,13 @@ class VBOATS:
         _, stripU4 = cv2.threshold(stripsU[3], 40, 255,cv2.THRESH_BINARY)
         _, stripU5 = cv2.threshold(stripsU[4], 40, 255,cv2.THRESH_BINARY)
         _, stripU6 = cv2.threshold(stripsU[5], 40, 255,cv2.THRESH_BINARY)
+
+        # _, stripU1 = cv2.threshold(stripsU[0], threshU1, 255,cv2.THRESH_TOZERO)
+        # _, stripU2 = cv2.threshold(stripsU[1], threshU2, 255,cv2.THRESH_TOZERO)
+        # _, stripU3 = cv2.threshold(stripsU[2], 30, 255,cv2.THRESH_TOZERO)
+        # _, stripU4 = cv2.threshold(stripsU[3], 40, 255,cv2.THRESH_TOZERO)
+        # _, stripU5 = cv2.threshold(stripsU[4], 40, 255,cv2.THRESH_TOZERO)
+        # _, stripU6 = cv2.threshold(stripsU[5], 40, 255,cv2.THRESH_TOZERO)
 
         hUs = stripU1.shape[0]
         blankStrip = np.zeros((hUs-dead_y,w),dtype=np.uint8)
@@ -477,7 +486,7 @@ class VBOATS:
         stripsV = strip_image(raw_vmap, nstrips=5, horizontal_strips=False)
         self.stripsV_raw = np.copy(stripsV)
 
-        _, stripV1 = cv2.threshold(stripsV[0], 9, 255,cv2.THRESH_BINARY)
+        _, stripV1 = cv2.threshold(stripsV[0], 5, 255,cv2.THRESH_BINARY)
         _, stripV2 = cv2.threshold(stripsV[1], threshV2, 255,cv2.THRESH_BINARY)
         _, stripV3 = cv2.threshold(stripsV[2], 40, 255,cv2.THRESH_BINARY)
         _, stripV4 = cv2.threshold(stripsV[3], 40, 255,cv2.THRESH_BINARY)
