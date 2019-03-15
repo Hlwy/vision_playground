@@ -533,6 +533,168 @@ class VBOATS:
         self.windows_ground = ground_wins
         return 0
 
+    """
+    ============================================================================
+                               Entire pipeline
+    ============================================================================
+    """
+    def pipelineTest(self, _img, threshU1=11, threshU2=7,threshV2=70, timing=False):
+        dt = 0
+        threshsU = [threshU1, threshU2, 30, 40,40,40]
+        threshsV = [5, threshV2, 40,40,40]
+        threshsCnt = [55.0,100.0,80.0,40.0,40.0,40.0]
+
+        if(timing): t0 = time.time()
+        # =========================================================================
+
+        img = self.read_image(_img)
+
+        kernelI = cv2.getStructuringElement(cv2.MORPH_RECT,(2,2))
+        img = cv2.morphologyEx(img, cv2.MORPH_CLOSE, kernelI)
+
+        h, w = img.shape[:2]
+        dead_x = self.dead_x; dead_y = self.dead_y
+
+        raw_umap, raw_vmap, dt = self.get_uv_map(img)
+        self.umap_raw = np.copy(raw_umap)
+        self.vmap_raw = np.copy(raw_vmap)
+        # =========================================================================
+        deadzoneU = raw_umap[1:dead_y+1, :]
+        _, deadzoneU = cv2.threshold(deadzoneU, 95, 255,cv2.THRESH_BINARY)
+
+        cv2.rectangle(raw_umap,(0,0),(raw_umap.shape[1],dead_y),(0,0,0), cv2.FILLED)
+        cv2.rectangle(raw_umap,(0,raw_umap.shape[0]-dead_y),(raw_umap.shape[1],raw_umap.shape[0]),(0,0,0), cv2.FILLED)
+
+        cv2.rectangle(raw_vmap,(0,0),(dead_x, raw_vmap.shape[0]),(0,0,0), cv2.FILLED)
+        cv2.rectangle(raw_vmap,(raw_vmap.shape[1]-dead_x,0),(raw_vmap.shape[1],raw_vmap.shape[0]),(0,0,0), cv2.FILLED)
+        # =========================================================================
+        if(self.flag_simulation): _, raw_umap = cv2.threshold(raw_umap, 35, 255,cv2.THRESH_TOZERO)
+        self.umap_deadzoned = np.copy(raw_umap)
+        self.vmap_deadzoned = np.copy(raw_vmap)
+        # _, raw_umap = cv2.threshold(raw_umap, 10, 255,cv2.THRESH_TOZERO)
+        try:
+            raw_umap = cv2.cvtColor(raw_umap,cv2.COLOR_GRAY2BGR)
+            raw_vmap = cv2.cvtColor(raw_vmap,cv2.COLOR_GRAY2BGR)
+        except:
+            print("[WARNING] ------------  Unnecessary Raw Mappings Color Converting")
+        # ==========================================================================
+        #							U-MAP Specific Functions
+        # ==========================================================================
+
+        stripsU = strip_image(raw_umap, nstrips=len(threshsU))
+        self.stripsU_raw = np.copy(stripsU)
+
+        stripsPu = []
+        for i, strip in enumerate(stripsU):
+            # _, tmpStrip = cv2.threshold(strip, threshsU[i], 255,cv2.THRESH_BINARY)
+            _, tmpStrip = cv2.threshold(strip, threshsU[i], 255,cv2.THRESH_TOZERO)
+            stripsPu.append(tmpStrip)
+
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT,(10,2))
+        stripsPu[0] = cv2.morphologyEx(stripsPu[0], cv2.MORPH_CLOSE, kernel)
+        stripsPu[1] = cv2.morphologyEx(stripsPu[1], cv2.MORPH_CLOSE, kernel)
+        stripsPu[2] = cv2.morphologyEx(stripsPu[2], cv2.MORPH_OPEN, kernel)
+
+        tmpMax = np.max(stripsPu[0])
+        dead_strip = stripsPu[0][0:10, :]
+        rest_strip = stripsPu[0][10:stripsPu[0].shape[0], :]
+
+        dead_strip[dead_strip < tmpMax*0.4] = 0
+        rest_strip[rest_strip < tmpMax*0.1] = 0
+        stripsPu[0] = np.concatenate((dead_strip,rest_strip), axis=0)
+
+
+        hUs,w = stripsPu[0].shape[:2]
+        blankStrip = np.zeros((hUs-dead_y,w),dtype=np.uint8)
+        deadzone_mask = np.concatenate((deadzoneU,blankStrip), axis=0)
+        try: deadzone_mask = cv2.cvtColor(deadzone_mask, cv2.COLOR_GRAY2BGR)
+        except: print("[WARNING] ------------  Unnecessary Deadzone Image Color Converting")
+
+        kernelD = cv2.getStructuringElement(cv2.MORPH_RECT,(50,5))
+        deadzone_mask = cv2.morphologyEx(deadzone_mask, cv2.MORPH_CLOSE, kernelD)
+        stripsPu[0] = cv2.addWeighted(stripsPu[0], 1.0, deadzone_mask, 1.0, 0)
+
+
+        self.stripsU_processed = np.copy(stripsPu)
+        umap = np.concatenate(stripsPu, axis=0)
+        try: umap = cv2.cvtColor(umap, cv2.COLOR_BGR2GRAY)
+        except: print("[WARNING] ------------  Unnecessary Umap Color Converting")
+        self.umap_processed = np.copy(umap)
+        # ==========================================================================
+
+        contours = []
+        for i, strip in enumerate(stripsPu):
+            contours += self.find_contours(strip, threshsCnt[i], offset=(0,hUs*i))
+
+        xLims, dLims, _ = self.extract_contour_bounds(contours)
+        self.xBounds = xLims
+        self.disparityBounds = dLims
+        self.filtered_contours = contours
+
+        # ==========================================================================
+        #							V-MAP Specific Functions
+        # ==========================================================================
+
+        stripsV = strip_image(raw_vmap, nstrips=len(threshsV), horizontal_strips=False)
+        self.stripsV_raw = np.copy(stripsV)
+
+        stripsPv = []
+        for i, strip in enumerate(stripsV):
+            # _, tmpStrip = cv2.threshold(strip, threshsV[i], 255,cv2.THRESH_BINARY)
+            _, tmpStrip = cv2.threshold(strip, threshsV[i], 255,cv2.THRESH_TOZERO)
+            stripsPv.append(tmpStrip)
+
+        tmpMax = np.max(stripsPu[0])
+        stripsPv[0][stripsPv[0] < np.max(stripsPv[0]*0.035)] = 0
+
+        top_strip = stripsPv[0][0:100, :]
+        bot_strip = stripsPv[0][100:stripsPu[0].shape[0], :]
+
+        top_strip[top_strip < tmpMax*0.1] = 0
+        # bot_strip[bot_strip < tmpMax*0.05] = 0
+        stripsPu[0] = np.concatenate((top_strip,bot_strip), axis=0)
+
+        stripsPv[1][stripsPv[1] < np.max(stripsPv[1]*0.9)] = 0
+
+
+        self.stripsV_processed = np.copy(stripsPv)
+        newV = np.concatenate(stripsPv, axis=1)
+        try: tmpV = cv2.cvtColor(newV, cv2.COLOR_BGR2GRAY)
+        except:
+            tmpV = newV
+            print("[WARNING] ------------  Unnecessary Umap Color Converting")
+
+        self.vmap_filtered = np.copy(tmpV)
+
+        mask, maskInv,mPxls, ground_wins,_ = self.get_vmap_mask(newV, maxStep = 15)
+        vmap = cv2.bitwise_and(newV,newV,mask=maskInv)
+
+        try: vmap = cv2.cvtColor(vmap, cv2.COLOR_BGR2GRAY)
+        except: print("[WARNING] ------------  Unnecessary Vmap Color Converting")
+
+        self.vmask = np.copy(mask)
+        self.vmap_processed = np.copy(vmap)
+        # =========================================================================
+
+        # print("[INFO] Beginning Obstacle Search....")
+        obs, obsU, ybounds, dbounds, windows, nObs = self.find_obstacles(vmap, dLims, xLims)
+
+        # =========================================================================
+        if(timing):
+            t1 = time.time()
+            dt = t1 - t0
+            print("\t[uv_pipeline] --- Took %f seconds to complete" % (dt))
+
+        self.nObs = nObs
+        self.obstacles = obs
+        self.obstacles_umap = obsU
+        self.yBounds = ybounds
+        self.dbounds = dbounds
+        self.ground_pxls = mPxls
+        self.windows_obstacles = windows
+        self.windows_ground = ground_wins
+        return 0
+
 
     def umap_displays(self, border_color=(255,0,255)):
         """
