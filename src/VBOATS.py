@@ -538,7 +538,7 @@ class VBOATS:
                                Entire pipeline
     ============================================================================
     """
-    def pipelineTest(self, _img, threshU1=11, threshU2=7,threshV2=70, timing=False):
+    def pipelineTest(self, _img, threshU1=11, threshU2=6,threshV2=70, timing=False):
         dt = 0
         threshsU = [threshU1, threshU2, 30, 40,40,40]
         threshsV = [5, threshV2, 40,40,40]
@@ -596,10 +596,11 @@ class VBOATS:
         stripsPu[2] = cv2.morphologyEx(stripsPu[2], cv2.MORPH_OPEN, kernel)
 
         tmpMax = np.max(stripsPu[0])
-        dead_strip = stripsPu[0][0:10, :]
-        rest_strip = stripsPu[0][10:stripsPu[0].shape[0], :]
+        dead_strip = stripsPu[0][0:14, :]
+        rest_strip = stripsPu[0][14:stripsPu[0].shape[0], :]
 
         dead_strip[dead_strip < tmpMax*0.4] = 0
+        # dead_strip[dead_strip < tmpMax*0.7] = 0
         rest_strip[rest_strip < tmpMax*0.1] = 0
         stripsPu[0] = np.concatenate((dead_strip,rest_strip), axis=0)
 
@@ -644,18 +645,25 @@ class VBOATS:
             _, tmpStrip = cv2.threshold(strip, threshsV[i], 255,cv2.THRESH_TOZERO)
             stripsPv.append(tmpStrip)
 
-        tmpMax = np.max(stripsPu[0])
+        tmpMax = np.max(stripsPv[0])
         stripsPv[0][stripsPv[0] < np.max(stripsPv[0]*0.035)] = 0
 
         top_strip = stripsPv[0][0:100, :]
-        bot_strip = stripsPv[0][100:stripsPu[0].shape[0], :]
+        bot_strip = stripsPv[0][100:stripsPv[0].shape[0], :]
 
         top_strip[top_strip < tmpMax*0.1] = 0
         # bot_strip[bot_strip < tmpMax*0.05] = 0
-        stripsPu[0] = np.concatenate((top_strip,bot_strip), axis=0)
+        stripsPv[0] = np.concatenate((top_strip,bot_strip), axis=0)
 
-        stripsPv[1][stripsPv[1] < np.max(stripsPv[1]*0.9)] = 0
+        # stripsPv[1][stripsPv[1] < np.max(stripsPv[1]*0.9)] = 0
+        tmpMax = np.max(stripsPv[1])
+        tH = stripsPv[1].shape[0]
+        top_strip = stripsPv[1][0:tH/3, :]
+        bot_strip = stripsPv[1][tH/3:tH, :]
 
+        top_strip[top_strip < tmpMax*0.9] = 0
+        # bot_strip[bot_strip < tmpMax*0.05] = 0
+        stripsPv[1] = np.concatenate((top_strip,bot_strip), axis=0)
 
         self.stripsV_processed = np.copy(stripsPv)
         newV = np.concatenate(stripsPv, axis=1)
@@ -666,7 +674,7 @@ class VBOATS:
 
         self.vmap_filtered = np.copy(tmpV)
 
-        mask, maskInv,mPxls, ground_wins,_ = self.get_vmap_mask(newV, maxStep = 15)
+        mask, maskInv,mPxls, ground_wins,_ = self.get_vmap_mask(newV, maxStep = 16)
         vmap = cv2.bitwise_and(newV,newV,mask=maskInv)
 
         try: vmap = cv2.cvtColor(vmap, cv2.COLOR_BGR2GRAY)
