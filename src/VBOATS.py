@@ -595,16 +595,6 @@ class VBOATS:
         stripsPu[1] = cv2.morphologyEx(stripsPu[1], cv2.MORPH_CLOSE, kernel)
         stripsPu[2] = cv2.morphologyEx(stripsPu[2], cv2.MORPH_OPEN, kernel)
 
-        tmpMax = np.max(stripsPu[0])
-        dead_strip = stripsPu[0][0:14, :]
-        rest_strip = stripsPu[0][14:stripsPu[0].shape[0], :]
-
-        dead_strip[dead_strip < tmpMax*0.4] = 0
-        # dead_strip[dead_strip < tmpMax*0.7] = 0
-        rest_strip[rest_strip < tmpMax*0.1] = 0
-        stripsPu[0] = np.concatenate((dead_strip,rest_strip), axis=0)
-
-
         hUs,w = stripsPu[0].shape[:2]
         blankStrip = np.zeros((hUs-dead_y,w),dtype=np.uint8)
         deadzone_mask = np.concatenate((deadzoneU,blankStrip), axis=0)
@@ -614,6 +604,16 @@ class VBOATS:
         kernelD = cv2.getStructuringElement(cv2.MORPH_RECT,(50,5))
         deadzone_mask = cv2.morphologyEx(deadzone_mask, cv2.MORPH_CLOSE, kernelD)
         stripsPu[0] = cv2.addWeighted(stripsPu[0], 1.0, deadzone_mask, 1.0, 0)
+
+
+        tmpMax = np.max(stripsPu[0])
+        dead_strip = stripsPu[0][0:14, :]
+        rest_strip = stripsPu[0][14:stripsPu[0].shape[0], :]
+
+        dead_strip[dead_strip < tmpMax*0.4] = 0
+        # dead_strip[dead_strip < tmpMax*0.7] = 0
+        rest_strip[rest_strip < tmpMax*0.1] = 0
+        stripsPu[0] = np.concatenate((dead_strip,rest_strip), axis=0)
 
 
         self.stripsU_processed = np.copy(stripsPu)
