@@ -21,6 +21,7 @@ ap = argparse.ArgumentParser(description='Extract images from a video file.')
 ap.add_argument("--home", "-p", type=str, metavar='PATH', help="Path to directory containing video file")
 ap.add_argument("--video", "-v", type=str, metavar='FILE', help="Name of video file to parse")
 ap.add_argument("--outputs", "-o", type=str, metavar='NAME', default='processed_outputs', help="Name of output file containing information about parsed video")
+ap.add_argument("--dir", "-d", type=str, metavar='NAME', default='frames', help="Name of directory containing extracted images")
 # Store parsed arguments into array of variables
 args = vars(ap.parse_args())
 
@@ -28,12 +29,13 @@ args = vars(ap.parse_args())
 vid = args["video"]
 home = args["home"]
 dataFile = args["outputs"]
+imgDir = args["dir"]
 
 # Change current directory to the specified home directory of the video of interest
 os.chdir(home)
 # Create the directories used to store the extracted data, if they haven't already been made
-if not os.path.exists("frames"):
-	os.mkdir('frames')
+if not os.path.exists(imgDir):
+	os.mkdir(imgDir)
 if not os.path.exists("data"):
 	os.mkdir('data')
 
@@ -83,7 +85,7 @@ with open(csvFile, "w") as output:
 		# Retrieve grabbed frame to extract it to .jpg file
 		_, frame = cap.retrieve()
 		# Name of file retrieved image is saved to
-		name = './frames/' + nameImg + '.jpg'
+		name = './' + imgDir + '/' + nameImg + '.jpg'
 
 		# Save grabbed image to file
 		print('Creating ' + name + '	@ ' + str(tmpTime)) # Debugging
