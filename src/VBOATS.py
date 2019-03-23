@@ -44,13 +44,18 @@ class VBOATS:
         self.w = 640
         self.dmax = 256
         self.window_size = [10,30]
+        self.vmap_search_window_height = 20
         self.mask_size = [20,40]
         self.dead_x = 2
         self.dead_y = 10
+        self.dH = 14
+        self.dW = 0
+        self.dThs = [0.4, 0.1, 0.15]
         # Counters
         self.nObs = 0
         # Flags
         self.flag_simulation = False
+        self.debug = True
     def get_uv_map(self, img, verbose=False, timing=False):
         """ ===================================================================
         Create the UV Disparity Mappings from a given depth (disparity) image
@@ -160,8 +165,9 @@ class VBOATS:
         for i in range(nObs):
             xs = xLims[i]
             ds = dLims[i]
-            ys,ws,_ = self.obstacle_search(vmap, ds, search_thresholds)
-            if(len(ys) <= 0):
+            ys,ws,_ = self.obstacle_search(vmap, ds, search_thresholds,verbose=verbose)
+            if self.debug: print("Y Limits: ", ys)
+            if(len(ys) <= 1):
                 if(verbose): print("[INFO] Found obstacle with zero height. Skipping...")
             elif(ys[0] == ys[1]):
                 if(verbose): print("[INFO] Found obstacle with zero height. Skipping...")
@@ -169,7 +175,7 @@ class VBOATS:
                 ybounds.append(ys)
                 obs.append([
                     (xs[0],ys[0]),
-                    (xs[1],ys[1])
+                    (xs[1],ys[-1])
                 ])
                 obsUmap.append([
                     (xs[0],ds[0]),
@@ -186,7 +192,10 @@ class VBOATS:
         ============================================================================
         """
         flag_done = False
+        try_last_search = False
+        tried_last_resort = False
         flag_found_start = False
+        flag_hit_limits = False
         count = 0; nWindows = 0; dt = 0
         yLims = []; windows = []
 
@@ -203,7 +212,7 @@ class VBOATS:
         xk = (xmax + xmin) / 2
         # Window Size
         if(window_size is None):
-            dWy = 20
+            dWy = self.vmap_search_window_height
             dWx = abs(xk - xmin)
             if(dWx <= 1): dWx = 2
         else: dWx, dWy = np.int32(window_size)/2
@@ -221,11 +230,12 @@ class VBOATS:
         # Begin Sliding Window Search Technique
         while(not flag_done):
             if(xk >= w): # If we are at image edges we must stop
-                flag_done = True
-                if(verbose): print("Exiting: Reached max image width.")
-            elif(yk + dWy >= h):
-                flag_done = True
-                if(verbose): print("Exiting: Reached max image height.")
+                flag_hit_limits = True
+                if(verbose): print("[INFO] Reached max image width.")
+            if(yk + dWy >= h):
+                flag_hit_limits = True
+                if(verbose): print("[INFO] Reached max image height.")
+            if(flag_hit_limits): flag_done = True
 
             # Slide window from previousy found center (Clip at image edges)
             # Update vertical [Y] window edges
@@ -253,6 +263,12 @@ class VBOATS:
             if(nPxls >= pxlMax):
                 if(nWindows == 0):
                     yLims.append(yk - dWy)
+                    if flag_hit_limits:
+                        flag_done = False
+                        print("\tTrying Last Ditch Search...")
+                else:
+                    yLims.append(yk)
+                    try_last_search = False
                 windows.append([(wx_low,wy_high),(wx_high,wy_low)])
                 nWindows += 1
                 prev_yk = yk
@@ -265,13 +281,14 @@ class VBOATS:
             yk = yk + 2*dWy
             count += 1
 
+        print("[%d] Good Windows" % nWindows)
         if(timing):
             t1 = time.time()
             dt = t1 - t0
             print("\t[obstacle_search] --- Took %f seconds to complete" % (dt))
 
         return yLims, windows, dt
-    def get_vmap_mask(self, vmap, threshold=20, maxStep=14, deltas=(0,20), mask_size = [10,30], window_size = [10,30], draw_method=1, verbose=False, timing=False):
+    def get_vmap_mask(self, vmap, threshold=20, min_ground_pixels=5, dxmean_thresh=1.0, maxStep=14, deltas=(0,20), mask_size = [10,30], window_size = [10,30], draw_method=1, verbose=False, timing=False):
         """
         ============================================================================
         	Abstract a mask image for filtering out the ground from a V-Map
@@ -279,6 +296,8 @@ class VBOATS:
         """
         flag_done = False
         count = 0; dt = 0
+        prev_xmean = mean_count = mean_sum = 0
+
         good_inds = []; mean_pxls = []; windows = []; masks = []
         # Sizes
         h,w = vmap.shape[:2]
@@ -357,16 +376,24 @@ class VBOATS:
                 # Update New window center coordinates
                 xk = xmean + dWx
                 yk = ymean - 2*dWy
+                dXmean = xmean - prev_xmean
+                mean_sum += dXmean
+                mean_count += 1
+                prev_xmean = xmean
             else: flag_done = True
             count += 1
+        avg_dxmean = mean_sum / float(mean_count)
         mean_pxls = np.array(mean_pxls)
         # ==========================================================================
-        if(draw_method == 1):
-            pts = cv2.approxPolyDP(mean_pxls,3,0)
-            cv2.polylines(black, [pts], 0, (255,255,255),20)
-        else:
-            for mask in masks:
-                cv2.rectangle(black,mask[0],mask[1],(255,255,255), cv2.FILLED)
+        if self.debug:
+            print("Average Horizontal Change in [%d] detected ground pixels = %.2f" % (mean_pxls.shape[0],avg_dxmean))
+        if(mean_pxls.shape[0] >= min_ground_pixels and avg_dxmean > dxmean_thresh):
+            if(draw_method == 1):
+                pts = cv2.approxPolyDP(mean_pxls,3,0)
+                cv2.polylines(black, [pts], 0, (255,255,255),int(1.0*avg_dxmean))
+            else:
+                for mask in masks:
+                    cv2.rectangle(black,mask[0],mask[1],(255,255,255), cv2.FILLED)
         # ==========================================================================
         cv2.rectangle(black,(0,0),(dx,h),(255,255,255), cv2.FILLED)
 
@@ -380,13 +407,12 @@ class VBOATS:
 
         return mask, mask_inv, mean_pxls, windows, dt
 
-
-    """
-    ============================================================================
-    	                       Entire pipeline
-    ============================================================================
-    """
     def pipeline(self, _img, threshU1=7, threshU2=20,threshV2=70, timing=False):
+        """
+        ============================================================================
+                                    Entire pipeline
+        ============================================================================
+        """
         dt = 0
         if(timing): t0 = time.time()
         # =========================================================================
@@ -533,15 +559,15 @@ class VBOATS:
         self.windows_ground = ground_wins
         return 0
 
-    """
-    ============================================================================
-                               Entire pipeline
-    ============================================================================
-    """
-    def pipelineTest(self, _img, threshU1=11, threshU2=6,threshV2=70, timing=False):
+    def pipelineTest(self, _img, threshU1=11, threshU2=6, threshV1=5, threshV2=70, timing=False):
+        """
+        ============================================================================
+                                Entire Test pipeline
+        ============================================================================
+        """
         dt = 0
         threshsU = [threshU1, threshU2, 30, 40,40,40]
-        threshsV = [5, threshV2, 40,40,40]
+        threshsV = [threshV1, threshV2, 40,40,40]
         threshsCnt = [55.0,100.0,80.0,40.0,40.0,40.0]
 
         if(timing): t0 = time.time()
@@ -606,13 +632,18 @@ class VBOATS:
         stripsPu[0] = cv2.addWeighted(stripsPu[0], 1.0, deadzone_mask, 1.0, 0)
 
 
+        dH = self.dH;    dths = self.dThs
         tmpMax = np.max(stripsPu[0])
-        dead_strip = stripsPu[0][0:14, :]
-        rest_strip = stripsPu[0][14:stripsPu[0].shape[0], :]
+        dead_strip = stripsPu[0][0:dH, :]
+        rest_strip = stripsPu[0][dH:stripsPu[0].shape[0], :]
 
-        dead_strip[dead_strip < tmpMax*0.4] = 0
-        # dead_strip[dead_strip < tmpMax*0.7] = 0
-        rest_strip[rest_strip < tmpMax*0.1] = 0
+        usThs = np.array([ [dths[0], dths[1]] ])
+
+        dead_strip[dead_strip < tmpMax*usThs[0,0]] = 0
+        rest_strip[rest_strip < tmpMax*usThs[0,1]] = 0
+
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT,(75,1))
+        rest_strip = cv2.morphologyEx(rest_strip, cv2.MORPH_CLOSE, kernel)
         stripsPu[0] = np.concatenate((dead_strip,rest_strip), axis=0)
 
 
@@ -645,15 +676,29 @@ class VBOATS:
             _, tmpStrip = cv2.threshold(strip, threshsV[i], 255,cv2.THRESH_TOZERO)
             stripsPv.append(tmpStrip)
 
+        vsThs = np.array([
+            [0.1, 0.0],
+            [0.8, 0.0]
+        ])
+
         tmpMax = np.max(stripsPv[0])
         stripsPv[0][stripsPv[0] < np.max(stripsPv[0]*0.035)] = 0
 
         top_strip = stripsPv[0][0:100, :]
         bot_strip = stripsPv[0][100:stripsPv[0].shape[0], :]
 
-        top_strip[top_strip < tmpMax*0.1] = 0
-        # bot_strip[bot_strip < tmpMax*0.05] = 0
+        top_strip[top_strip < tmpMax*vsThs[0,0]] = 0
+        bot_strip[bot_strip < tmpMax*vsThs[0,1]] = 0
         stripsPv[0] = np.concatenate((top_strip,bot_strip), axis=0)
+
+        dw = self.dW;        vdTh = [dths[2], 0]
+
+        dead_strip = stripsPv[0][:, 0:dw]
+        rest_strip = stripsPv[0][:,dw:stripsPv[0].shape[1]]
+
+        dead_strip[dead_strip < tmpMax*vdTh[0]] = 0
+        rest_strip[rest_strip < tmpMax*vdTh[1]] = 0
+        stripsPv[0] = np.concatenate((dead_strip,rest_strip), axis=1)
 
         # stripsPv[1][stripsPv[1] < np.max(stripsPv[1]*0.9)] = 0
         tmpMax = np.max(stripsPv[1])
@@ -661,8 +706,8 @@ class VBOATS:
         top_strip = stripsPv[1][0:tH/3, :]
         bot_strip = stripsPv[1][tH/3:tH, :]
 
-        top_strip[top_strip < tmpMax*0.9] = 0
-        # bot_strip[bot_strip < tmpMax*0.05] = 0
+        top_strip[top_strip < tmpMax*vsThs[1,0]] = 0
+        bot_strip[bot_strip < tmpMax*vsThs[1,1]] = 0
         stripsPv[1] = np.concatenate((top_strip,bot_strip), axis=0)
 
         self.stripsV_processed = np.copy(stripsPv)
@@ -685,7 +730,7 @@ class VBOATS:
         # =========================================================================
 
         # print("[INFO] Beginning Obstacle Search....")
-        obs, obsU, ybounds, dbounds, windows, nObs = self.find_obstacles(vmap, dLims, xLims)
+        obs, obsU, ybounds, dbounds, windows, nObs = self.find_obstacles(vmap, dLims, xLims,verbose=False)
 
         # =========================================================================
         if(timing):
@@ -716,19 +761,21 @@ class VBOATS:
 
         tmp = []
         for s in self.stripsU_raw:
+            s = cv2.applyColorMap(s,cv2.COLORMAP_PARULA)
             tmp.append(s)
             tmp.append(borderb)
         dispU1 = np.concatenate(tmp, axis=0)
 
         tmp = []
         for s in self.stripsU_processed:
+            s = cv2.applyColorMap(s,cv2.COLORMAP_PARULA)
             tmp.append(s)
             tmp.append(borderb)
         dispU2 = np.concatenate(tmp, axis=0)
 
         for cnt in self.filtered_contours:
-            cv2.drawContours(dispU1, [cnt], 0, (255,0,0), 1)
-            cv2.drawContours(dispU2, [cnt], 0, (255,0,0), 1)
+            cv2.drawContours(dispU1, [cnt], 0, (255,255,255), 1)
+            cv2.drawContours(dispU2, [cnt], 0, (255,255,255), 1)
 
         comp = np.concatenate((dispU1,borderb2,dispU2), axis=0)
 
@@ -739,12 +786,14 @@ class VBOATS:
 
         tmp = []
         for s in self.stripsV_raw:
+            s = cv2.applyColorMap(s,cv2.COLORMAP_PARULA)
             tmp.append(s)
             tmp.append(borders)
         dispV1 = np.concatenate(tmp, axis=1)
 
         tmp = []
         for s in self.stripsV_processed:
+            s = cv2.applyColorMap(s,cv2.COLORMAP_PARULA)
             tmp.append(s)
             tmp.append(borders)
         dispV2 = np.concatenate(tmp, axis=1)

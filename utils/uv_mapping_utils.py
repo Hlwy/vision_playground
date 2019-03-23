@@ -13,12 +13,30 @@ from matplotlib import pyplot as plt
 from seg_utils import *
 
 
-def make_uv_overlay(_img, umap, vmap):
-    blank = np.ones((umap.shape[0],vmap.shape[1]),np.uint8)*255
-    pt1 = np.concatenate((np.copy(_img), vmap), axis=1)
-    pt2 = np.concatenate((umap,blank),axis=1)
-    overlay = np.concatenate((pt1,pt2),axis=0)
-    overlay = cv2.cvtColor(overlay,cv2.COLOR_GRAY2BGR)
+def make_uv_overlay(_img, umap, vmap,border_width=2):
+    img = np.copy(_img)
+    try: img = cv2.cvtColor(img,cv2.COLOR_GRAY2BGR)
+    except: pass
+    blank = np.ones((umap.shape[0],vmap.shape[1],3),np.uint8)*255
+    # borderb = np.ones((2,umap.shape[1],3),dtype=np.uint8); borderb[:] = border_color
+    # borders = np.ones((vmap.shape[0],2,3),dtype=np.uint8); borders[:] = border_color
+    borderb = np.ones((border_width,umap.shape[1]+border_width+vmap.shape[1],3),dtype=np.uint8); borderb[:] = [255,255,255]
+    borders = np.ones((vmap.shape[0],border_width,3),dtype=np.uint8); borders[:] = [255,255,255]
+    borders2 = np.ones((umap.shape[0],border_width,3),dtype=np.uint8); borders2[:] = [255,255,255]
+
+    # pt1 = np.concatenate((np.copy(_img), vmap), axis=1)
+    # pt2 = np.concatenate((umap,blank),axis=1)
+
+    # numap = cv2.applyColorMap(umap,cv2.COLORMAP_JET)
+    # nvmap = cv2.applyColorMap(vmap,cv2.COLORMAP_JET)
+    numap = cv2.applyColorMap(umap,cv2.COLORMAP_PARULA)
+    nvmap = cv2.applyColorMap(vmap,cv2.COLORMAP_PARULA)
+    # print(img.shape,borders.shape, nvmap.shape)
+    # print(numap.shape,borders2.shape, blank.shape)
+    pt1 = np.concatenate((img,borders, nvmap), axis=1)
+    pt2 = np.concatenate((numap,borders2,blank),axis=1)
+    overlay = np.concatenate((pt1,borderb,pt2),axis=0)
+    # overlay = cv2.cvtColor(overlay,cv2.COLOR_GRAY2BGR)
     return overlay
 
 def umapping(_img, nBins=255, use_normalized=False, use_alternate_mapping=True, mask_deadzones=True, deadzone=5, verbose=True):
