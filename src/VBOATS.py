@@ -1,5 +1,5 @@
 import numpy as np
-import os, sys, cv2, time
+import os, sys, cv2, time, math
 from matplotlib import pyplot as plt
 
 sys.path.append(os.path.abspath(os.path.join('..', '')))
@@ -50,11 +50,21 @@ class VBOATS:
         self.dead_y = 10
         self.dH = 14
         self.dW = 0
-        self.dThs = [0.4, 0.1, 0.15]
+        self.dThs = [0.4, 0.4,0.1, 0.15]
+
+        self.deadThreshMin = 85
+        self.dHplus = 5
+        self.kszs = [
+            (10,2),
+            (50,5),
+            (75,1)
+        ]
+        self.deadUThresh = 0.8
         # Counters
         self.nObs = 0
         # Flags
         self.flag_simulation = False
+        self.flag_morphs = True
         self.debug = True
     def get_uv_map(self, img, verbose=False, timing=False):
         """ ===================================================================
@@ -382,15 +392,18 @@ class VBOATS:
                 prev_xmean = xmean
             else: flag_done = True
             count += 1
+        if mean_count == 0: mean_count = 1
         avg_dxmean = mean_sum / float(mean_count)
         mean_pxls = np.array(mean_pxls)
+        # lWidth = int(np.round(1.0*avg_dxmean))
+        lWidth = int(math.ceil(1.0*avg_dxmean))
         # ==========================================================================
         if self.debug:
-            print("Average Horizontal Change in [%d] detected ground pixels = %.2f" % (mean_pxls.shape[0],avg_dxmean))
+            print("Average Horizontal Change in [%d] detected ground pixels = %.2f (width=%d)" % (mean_pxls.shape[0],avg_dxmean,lWidth))
         if(mean_pxls.shape[0] >= min_ground_pixels and avg_dxmean > dxmean_thresh):
             if(draw_method == 1):
                 pts = cv2.approxPolyDP(mean_pxls,3,0)
-                cv2.polylines(black, [pts], 0, (255,255,255),int(1.0*avg_dxmean))
+                cv2.polylines(black, [pts], 0, (255,255,255),lWidth)
             else:
                 for mask in masks:
                     cv2.rectangle(black,mask[0],mask[1],(255,255,255), cv2.FILLED)
@@ -559,14 +572,14 @@ class VBOATS:
         self.windows_ground = ground_wins
         return 0
 
-    def pipelineTest(self, _img, threshU1=11, threshU2=6, threshV1=5, threshV2=70, timing=False):
+    def pipelineTest(self, _img, threshU1=0.15, threshU2=0.1, threshV1=5, threshV2=70, timing=False):
         """
         ============================================================================
                                 Entire Test pipeline
         ============================================================================
         """
         dt = 0
-        threshsU = [threshU1, threshU2, 30, 40,40,40]
+        threshsU = [threshU1, threshU2, 0.3, 0.4,0.4,0.4]
         threshsV = [threshV1, threshV2, 40,40,40]
         threshsCnt = [55.0,100.0,80.0,40.0,40.0,40.0]
 
@@ -586,7 +599,14 @@ class VBOATS:
         self.vmap_raw = np.copy(raw_vmap)
         # =========================================================================
         deadzoneU = raw_umap[1:dead_y+1, :]
-        _, deadzoneU = cv2.threshold(deadzoneU, 95, 255,cv2.THRESH_BINARY)
+        deadMax = np.max(deadzoneU)
+        deadThresh = deadMax * self.deadUThresh
+        if deadThresh < self.deadThreshMin: deadThresh = self.deadThreshMin
+
+        if(self.debug):
+            print("Umap Deadzone [%dx%d] Max, Thresholded: %d, %d" % (deadzoneU.shape[0], deadzoneU.shape[1],deadMax,deadThresh))
+        # _, deadzoneU = cv2.threshold(deadzoneU, deadThresh, 255,cv2.THRESH_BINARY)
+        _, deadzoneU = cv2.threshold(deadzoneU, deadThresh, 255,cv2.THRESH_TOZERO)
 
         cv2.rectangle(raw_umap,(0,0),(raw_umap.shape[1],dead_y),(0,0,0), cv2.FILLED)
         cv2.rectangle(raw_umap,(0,raw_umap.shape[0]-dead_y),(raw_umap.shape[1],raw_umap.shape[0]),(0,0,0), cv2.FILLED)
@@ -612,11 +632,16 @@ class VBOATS:
 
         stripsPu = []
         for i, strip in enumerate(stripsU):
+            tmpMax = np.max(strip)
+            tmpThresh = threshsU[i] * tmpMax
+            if(self.debug):
+                print("Umap Strip [%d] Max, Thresholded: %d, %d" % (i,tmpMax,tmpThresh))
             # _, tmpStrip = cv2.threshold(strip, threshsU[i], 255,cv2.THRESH_BINARY)
-            _, tmpStrip = cv2.threshold(strip, threshsU[i], 255,cv2.THRESH_TOZERO)
+            _, tmpStrip = cv2.threshold(strip, tmpThresh, 255,cv2.THRESH_TOZERO)
             stripsPu.append(tmpStrip)
 
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT,(10,2))
+        ksz1 = self.kszs[0]
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT,ksz1)
         stripsPu[0] = cv2.morphologyEx(stripsPu[0], cv2.MORPH_CLOSE, kernel)
         stripsPu[1] = cv2.morphologyEx(stripsPu[1], cv2.MORPH_CLOSE, kernel)
         stripsPu[2] = cv2.morphologyEx(stripsPu[2], cv2.MORPH_OPEN, kernel)
@@ -627,25 +652,30 @@ class VBOATS:
         try: deadzone_mask = cv2.cvtColor(deadzone_mask, cv2.COLOR_GRAY2BGR)
         except: print("[WARNING] ------------  Unnecessary Deadzone Image Color Converting")
 
-        kernelD = cv2.getStructuringElement(cv2.MORPH_RECT,(50,5))
-        deadzone_mask = cv2.morphologyEx(deadzone_mask, cv2.MORPH_CLOSE, kernelD)
-        stripsPu[0] = cv2.addWeighted(stripsPu[0], 1.0, deadzone_mask, 1.0, 0)
+        if self.flag_morphs:
+            ksz2 = self.kszs[1]
+            kernelD = cv2.getStructuringElement(cv2.MORPH_RECT,ksz2)
+            deadzone_mask = cv2.morphologyEx(deadzone_mask, cv2.MORPH_CLOSE, kernelD)
+            stripsPu[0] = cv2.addWeighted(stripsPu[0], 1.0, deadzone_mask, 1.0, 0)
 
 
-        dH = self.dH;    dths = self.dThs
+        dH = self.dH; dHplus = self.dHplus;    dths = self.dThs
         tmpMax = np.max(stripsPu[0])
         dead_strip = stripsPu[0][0:dH, :]
-        rest_strip = stripsPu[0][dH:stripsPu[0].shape[0], :]
+        mid_strip = stripsPu[0][dH:dHplus, :]
+        rest_strip = stripsPu[0][dHplus:stripsPu[0].shape[0], :]
 
-        usThs = np.array([ [dths[0], dths[1]] ])
+        usThs = np.array([ [dths[0], dths[1], dths[2]] ])
 
         dead_strip[dead_strip < tmpMax*usThs[0,0]] = 0
-        rest_strip[rest_strip < tmpMax*usThs[0,1]] = 0
+        mid_strip[mid_strip < tmpMax*usThs[0,1]] = 0
+        rest_strip[rest_strip < tmpMax*usThs[0,2]] = 0
 
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT,(75,1))
-        rest_strip = cv2.morphologyEx(rest_strip, cv2.MORPH_CLOSE, kernel)
-        stripsPu[0] = np.concatenate((dead_strip,rest_strip), axis=0)
-
+        if self.flag_morphs:
+            ksz3 = self.kszs[2]
+            kernel = cv2.getStructuringElement(cv2.MORPH_RECT,ksz3)
+            rest_strip = cv2.morphologyEx(rest_strip, cv2.MORPH_CLOSE, kernel)
+            stripsPu[0] = np.concatenate((dead_strip,mid_strip,rest_strip), axis=0)
 
         self.stripsU_processed = np.copy(stripsPu)
         umap = np.concatenate(stripsPu, axis=0)
@@ -678,7 +708,7 @@ class VBOATS:
 
         vsThs = np.array([
             [0.1, 0.0],
-            [0.8, 0.0]
+            [0.7, 0.0]
         ])
 
         tmpMax = np.max(stripsPv[0])
@@ -691,7 +721,7 @@ class VBOATS:
         bot_strip[bot_strip < tmpMax*vsThs[0,1]] = 0
         stripsPv[0] = np.concatenate((top_strip,bot_strip), axis=0)
 
-        dw = self.dW;        vdTh = [dths[2], 0]
+        dw = self.dW;        vdTh = [dths[3], 0]
 
         dead_strip = stripsPv[0][:, 0:dw]
         rest_strip = stripsPv[0][:,dw:stripsPv[0].shape[1]]
