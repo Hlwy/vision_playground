@@ -150,17 +150,17 @@ class VBOATS:
             filtered_contours = [cnt for cnt in contours if cv2.arcLength(cnt,True) >= threshold]
             filtered_contours = [cnt for cnt in filtered_contours if cv2.arcLength(cnt,True) <= max_thresh]
             if(debug):
-                raw_perimeters = [cv2.arcLength(cnt,True) for cnt in contours]
-                filtered_perimeters = [cv2.arcLength(cnt,True) for cnt in filtered_contours]
-                print("Raw Contour Perimeters:",raw_perimeters)
-                print("Filtered Contour Perimeters:",filtered_perimeters)
+                raw_perimeters = np.array([cv2.arcLength(cnt,True) for cnt in contours])
+                filtered_perimeters = np.array([cv2.arcLength(cnt,True) for cnt in filtered_contours])
+                print("Raw Contour Perimeters:",np.unique(raw_perimeters))
+                print("Filtered Contour Perimeters:",np.unique(filtered_perimeters))
         elif(threshold_method == "area"):
             filtered_contours = [cnt for cnt in contours if cv2.contourArea(cnt) >= threshold]
             if(debug):
-                raw_areas = [cv2.contourArea(cnt) for cnt in contours]
-                filtered_areas = [cv2.contourArea(cnt) for cnt in filtered_contours]
-                print("Raw Contour Areas:",raw_areas)
-                print("Filtered Contour Areas:",filtered_areas)
+                raw_areas = np.array([cv2.contourArea(cnt) for cnt in contours])
+                filtered_areas = np.array([cv2.contourArea(cnt) for cnt in filtered_contours])
+                print("Raw Contour Areas:",np.unique(raw_areas))
+                print("Filtered Contour Areas:",np.unique(filtered_areas))
         else:
             print("[ERROR] find_contours --- Unsupported filtering method!")
 
@@ -380,7 +380,8 @@ class VBOATS:
             if(nPxls >= threshold):
                 xmean = np.int(np.mean(nonzerox[good_inds]))
                 ymean = np.int(np.mean(nonzeroy[good_inds]))
-                mean_pxls.append(np.array([xmean,ymean]))
+                if mean_count == 0: mean_pxls.append(np.array([xmean,h]))
+                else: mean_pxls.append(np.array([xmean,ymean]))
 
                 # Draw current window onto mask template
                 my_low = ymean - dMy;          	my_high = ymean + dMy
@@ -399,7 +400,8 @@ class VBOATS:
         avg_dxmean = mean_sum / float(mean_count)
         mean_pxls = np.array(mean_pxls)
         # lWidth = int(np.round(1.0*avg_dxmean))
-        lWidth = int(math.ceil(1.0*avg_dxmean))
+        if avg_dxmean >= 1.5: lWidth = int(math.ceil(1.75*avg_dxmean))
+        else: lWidth = int(math.ceil(1.0*avg_dxmean))
         # ==========================================================================
         if self.debug:
             print("Average Horizontal Change in [%d] detected ground pixels = %.2f (width=%d)" % (mean_pxls.shape[0],avg_dxmean,lWidth))

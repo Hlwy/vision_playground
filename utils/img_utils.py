@@ -8,9 +8,6 @@ def add_filename_prefixs(_dir, _prefix):
 	for file in filenames:
 		newName = str(_prefix) + "_" + str(file)
 		os.rename(file, newName)
-		# print(file)
-		# print(newName)
-	# print(filenames)
 	print("Finished")
 
 
