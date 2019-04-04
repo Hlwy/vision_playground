@@ -22,6 +22,7 @@ class obstacle_detector_node:
         rospy.init_node('obstacle_detector')
         self.bridge = CvBridge()
 
+
         self.base_tf = rospy.get_param('~base_tf', "/ugv1/odom")
         self.cam_tf = rospy.get_param('~cam_tf', "/ugv1/d415_camera_depth_optical_frame")
         self.image_topic = rospy.get_param('~image_topic', "/ugv1/d415/depth/image_raw")

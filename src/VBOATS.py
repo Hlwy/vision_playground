@@ -60,6 +60,9 @@ class VBOATS:
             (75,1)
         ]
         self.deadUThresh = 0.8
+        self.testCntThresh = 30.0
+        self.testRestThreshRatio = 0.5
+        self.is_ground_present = True
         # Counters
         self.nObs = 0
         # Flags
@@ -463,6 +466,73 @@ class VBOATS:
         newStrip = np.concatenate(newStrips, axis=0)
         return newStrip
 
+    def test_filter_first_umap_strip(self,umap_strip,max_value,thresholds,ratio_thresh=0.5,base_thresh=35):
+        try: umap_strip = cv2.cvtColor(umap_strip,cv2.COLOR_BGR2GRAY)
+        except: print("[WARNING] test_filter_first_umap_strip() ------  Unnecessary Strip Color Conversion BGR -> Gray")
+        n = len(thresholds)
+        strip = np.copy(umap_strip)
+        stripMax = np.max(strip)
+
+        hs, ws = strip.shape[:2]
+        dh = hs / n
+
+        dead_strip = strip[0:dh, :]
+        rest_strip = strip[dh:hs, :]
+
+        oDead = np.copy(dead_strip)
+        oRest = np.copy(rest_strip)
+
+        deadMax = np.max(dead_strip)
+
+        deadThreshGain = (stripMax - deadMax)/255.0
+        deadThreshOffset = int(base_thresh*deadThreshGain)
+        deadThresh = base_thresh + deadThreshOffset
+        dead_strip[dead_strip < deadThresh] = 0
+        # print("base, gain, offset, thresh: %d, %.2f, %d, %d" % (baseDeadThresh,deadThreshGain,deadThreshOffset,deadThresh))
+
+        # Perform
+        hd, wd = dead_strip.shape[:2]
+        hr, wr = rest_strip.shape[:2]
+
+        claheDead = cv2.createCLAHE(clipLimit=2.0,tileGridSize=(hd,wd))
+        claheRest = cv2.createCLAHE(clipLimit=2.0,tileGridSize=(hr,wr))
+
+        clD = claheDead.apply(dead_strip)
+        clR = claheRest.apply(rest_strip)
+
+        # copyCld = np.copy(clD)
+        # copyClr = np.copy(clR)
+
+        threshD = 7
+        threshR = int(ratio_thresh * np.max(clR))
+
+        _,stripD = cv2.threshold(clD, threshD,255,cv2.THRESH_TOZERO) # clD[clD < 7] = 0
+        _,stripR = cv2.threshold(clR, threshR,255,cv2.THRESH_TOZERO)
+
+        newStrip = np.concatenate((stripD,stripR), axis=0)
+        nStrip = np.copy(newStrip)
+
+        ksize = (15,2)
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT,ksize)
+        pStrip = cv2.morphologyEx(newStrip, cv2.MORPH_CLOSE, kernel)
+
+        if self.is_ground_present: cnt_thresh = 50.0
+        else: cnt_thresh = self.testCntThresh
+
+        contours = self.find_contours(pStrip, cnt_thresh)
+        disp = cv2.applyColorMap(pStrip,cv2.COLORMAP_PARULA)
+        disp = cv2.cvtColor(disp,cv2.COLOR_BGR2RGB)
+        [cv2.drawContours(disp, [cnt], 0, (255,0,0), 1) for cnt in contours]
+
+        # print("testMax2, testThresh2: %d, %d" % (testMax2,testThresh2))
+        # pplots([orig,dead_strip,dcl,dcl2],"Test",(4,1))
+        # pplots([stripsU[0],newStrip2],"CLAHE Compare",(2,1))
+
+        try: newStrip = cv2.cvtColor(newStrip,cv2.COLOR_GRAY2BGR)
+        except: print("[WARNING] test_filter_first_umap_strip() ------  Unnecessary Strip Color Conversion Gray -> BGR")
+
+        return newStrip, strip, nStrip, disp
+
 
     def pipeline(self, _img, threshU1=7, threshU2=20,threshV2=70, timing=False):
         """
@@ -665,87 +735,7 @@ class VBOATS:
         try:
             raw_umap = cv2.cvtColor(raw_umap,cv2.COLOR_GRAY2BGR)
             raw_vmap = cv2.cvtColor(raw_vmap,cv2.COLOR_GRAY2BGR)
-        except:
-            print("[WARNING] ------------  Unnecessary Raw Mappings Color Converting")
-        # ==========================================================================
-        #							U-MAP Specific Functions
-        # ==========================================================================
-
-        stripsU = strip_image(raw_umap, nstrips=len(threshsU))
-        self.stripsU_raw = np.copy(stripsU)
-
-        stripsPu = []
-        for i, strip in enumerate(stripsU):
-            if i == 0:
-                maxdisparity = np.max(raw_umap)
-                # stripThreshs = [0.24, 0.15, 0.075, 0.065,0.025,0.025]
-                # stripThreshs = [0.2, 0.15, 0.075, 0.065,0.025,0.025]
-                stripThreshs = [0.15, 0.15, 0.075, 0.065,0.025,0.025]
-                stripThreshs = [0.15, 0.15, 0.075, 0.065,0.05,0.025]
-                tmpStrip = self.filter_first_umap_strip(strip,maxdisparity,stripThreshs)
-            else:
-                tmpMax = np.max(strip)
-                tmpThresh = threshsU[i] * tmpMax
-                if(self.debug): print("Umap Strip [%d] Max, Thresholded: %d, %d" % (i,tmpMax,tmpThresh))
-                # _, tmpStrip = cv2.threshold(strip, threshsU[i], 255,cv2.THRESH_BINARY)
-                _, tmpStrip = cv2.threshold(strip, tmpThresh, 255,cv2.THRESH_TOZERO)
-            stripsPu.append(tmpStrip)
-
-        ksz1 = self.kszs[0]
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT,ksz1)
-        stripsPu[0] = cv2.morphologyEx(stripsPu[0], cv2.MORPH_CLOSE, kernel)
-        stripsPu[1] = cv2.morphologyEx(stripsPu[1], cv2.MORPH_CLOSE, kernel)
-        stripsPu[2] = cv2.morphologyEx(stripsPu[2], cv2.MORPH_OPEN, kernel)
-
-        hUs,w = stripsPu[0].shape[:2]
-        # blankStrip = np.zeros((hUs-dead_y,w),dtype=np.uint8)
-        # deadzone_mask = np.concatenate((deadzoneU,blankStrip), axis=0)
-        # try: deadzone_mask = cv2.cvtColor(deadzone_mask, cv2.COLOR_GRAY2BGR)
-        # except: print("[WARNING] ------------  Unnecessary Deadzone Image Color Converting")
-        #
-        # if self.flag_morphs:
-        #     ksz2 = self.kszs[1]
-        #     kernelD = cv2.getStructuringElement(cv2.MORPH_RECT,ksz2)
-        #     deadzone_mask = cv2.morphologyEx(deadzone_mask, cv2.MORPH_CLOSE, kernelD)
-        #     stripsPu[0] = cv2.addWeighted(stripsPu[0], 1.0, deadzone_mask, 1.0, 0)
-
-
-        dH = self.dH; dHplus = self.dHplus;    dths = self.dThs
-        # tmpMax = np.max(stripsPu[0])
-        # dead_strip = stripsPu[0][0:dH, :]
-        # mid_strip = stripsPu[0][dH:dHplus, :]
-        # rest_strip = stripsPu[0][dHplus:stripsPu[0].shape[0], :]
-        #
-        # usThs = np.array([ [dths[0], dths[1], dths[2]] ])
-        #
-        # dead_strip[dead_strip < tmpMax*usThs[0,0]] = 0
-        # mid_strip[mid_strip < tmpMax*usThs[0,1]] = 0
-        # rest_strip[rest_strip < tmpMax*usThs[0,2]] = 0
-        #
-        # if self.flag_morphs:
-        #     ksz3 = self.kszs[2]
-        #     kernel = cv2.getStructuringElement(cv2.MORPH_RECT,ksz3)
-        #     rest_strip = cv2.morphologyEx(rest_strip, cv2.MORPH_CLOSE, kernel)
-        #     stripsPu[0] = np.concatenate((dead_strip,mid_strip,rest_strip), axis=0)
-
-        self.stripsU_processed = np.copy(stripsPu)
-        umap = np.concatenate(stripsPu, axis=0)
-        try: umap = cv2.cvtColor(umap, cv2.COLOR_BGR2GRAY)
-        except: print("[WARNING] ------------  Unnecessary Umap Color Converting")
-        self.umap_processed = np.copy(umap)
-        # ==========================================================================
-
-        # contours = []
-        # for i, strip in enumerate(stripsPu):
-        #     contours += self.find_contours(strip, threshsCnt[i], offset=(0,hUs*i),debug=self.debug)
-
-        contours = self.find_contours(umap, 50.0,debug=self.debug)
-
-        self.contours = contours
-        xLims, dLims, _ = self.extract_contour_bounds(contours)
-        self.xBounds = xLims
-        self.disparityBounds = dLims
-        self.filtered_contours = contours
+        except: print("[WARNING] ------------  Unnecessary Raw Mappings Color Converting")
 
         # ==========================================================================
         #							V-MAP Specific Functions
@@ -775,6 +765,7 @@ class VBOATS:
         bot_strip[bot_strip < tmpMax*vsThs[0,1]] = 0
         stripsPv[0] = np.concatenate((top_strip,bot_strip), axis=0)
 
+        dH = self.dH;        dHplus = self.dHplus;      dths = self.dThs
         dw = self.dW;        vdTh = [dths[3], 0]
 
         dead_strip = stripsPv[0][:, 0:dw]
@@ -811,7 +802,160 @@ class VBOATS:
 
         self.vmask = np.copy(mask)
         self.vmap_processed = np.copy(vmap)
+        self.is_ground_present = ground_detected
         # =========================================================================
+
+
+        # ==========================================================================
+        #							U-MAP Specific Functions
+        # ==========================================================================
+
+        stripsU = strip_image(raw_umap, nstrips=len(threshsU))
+        self.stripsU_raw = np.copy(stripsU)
+
+        stripsPu = []
+        for i, strip in enumerate(stripsU):
+            if i == 0:
+                maxdisparity = np.max(raw_umap)
+                # stripThreshs = [0.24, 0.15, 0.075, 0.065,0.025,0.025]
+                # stripThreshs = [0.2, 0.15, 0.075, 0.065,0.025,0.025]
+                # stripThreshs = [0.15, 0.15, 0.075, 0.065,0.025,0.025]
+                stripThreshs = [0.15, 0.15, 0.075, 0.065,0.05,0.025]
+                # tmpStrip = self.filter_first_umap_strip(strip,maxdisparity,stripThreshs)
+                tmpStrip,_,_,_ = self.test_filter_first_umap_strip(strip,maxdisparity,stripThreshs, ratio_thresh=self.testRestThreshRatio)
+            else:
+                tmpMax = np.max(strip)
+                tmpThresh = threshsU[i] * tmpMax
+                if(self.debug): print("Umap Strip [%d] Max, Thresholded: %d, %d" % (i,tmpMax,tmpThresh))
+                # _, tmpStrip = cv2.threshold(strip, threshsU[i], 255,cv2.THRESH_BINARY)
+                _, tmpStrip = cv2.threshold(strip, tmpThresh, 255,cv2.THRESH_TOZERO)
+            stripsPu.append(tmpStrip)
+
+        ksz1 = self.kszs[0]
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT,ksz1)
+        stripsPu[0] = cv2.morphologyEx(stripsPu[0], cv2.MORPH_CLOSE, kernel)
+        stripsPu[1] = cv2.morphologyEx(stripsPu[1], cv2.MORPH_CLOSE, kernel)
+        stripsPu[2] = cv2.morphologyEx(stripsPu[2], cv2.MORPH_OPEN, kernel)
+
+        hUs,w = stripsPu[0].shape[:2]
+        # blankStrip = np.zeros((hUs-dead_y,w),dtype=np.uint8)
+        # deadzone_mask = np.concatenate((deadzoneU,blankStrip), axis=0)
+        # try: deadzone_mask = cv2.cvtColor(deadzone_mask, cv2.COLOR_GRAY2BGR)
+        # except: print("[WARNING] ------------  Unnecessary Deadzone Image Color Converting")
+        #
+        # if self.flag_morphs:
+        #     ksz2 = self.kszs[1]
+        #     kernelD = cv2.getStructuringElement(cv2.MORPH_RECT,ksz2)
+        #     deadzone_mask = cv2.morphologyEx(deadzone_mask, cv2.MORPH_CLOSE, kernelD)
+        #     stripsPu[0] = cv2.addWeighted(stripsPu[0], 1.0, deadzone_mask, 1.0, 0)
+
+        # tmpMax = np.max(stripsPu[0])
+        # dead_strip = stripsPu[0][0:dH, :]
+        # mid_strip = stripsPu[0][dH:dHplus, :]
+        # rest_strip = stripsPu[0][dHplus:stripsPu[0].shape[0], :]
+        #
+        # usThs = np.array([ [dths[0], dths[1], dths[2]] ])
+        #
+        # dead_strip[dead_strip < tmpMax*usThs[0,0]] = 0
+        # mid_strip[mid_strip < tmpMax*usThs[0,1]] = 0
+        # rest_strip[rest_strip < tmpMax*usThs[0,2]] = 0
+        #
+        # if self.flag_morphs:
+        #     ksz3 = self.kszs[2]
+        #     kernel = cv2.getStructuringElement(cv2.MORPH_RECT,ksz3)
+        #     rest_strip = cv2.morphologyEx(rest_strip, cv2.MORPH_CLOSE, kernel)
+        #     stripsPu[0] = np.concatenate((dead_strip,mid_strip,rest_strip), axis=0)
+
+        self.stripsU_processed = np.copy(stripsPu)
+        umap = np.concatenate(stripsPu, axis=0)
+        try: umap = cv2.cvtColor(umap, cv2.COLOR_BGR2GRAY)
+        except: print("[WARNING] ------------  Unnecessary Umap Color Converting")
+        self.umap_processed = np.copy(umap)
+        # ==========================================================================
+
+        # contours = []
+        # for i, strip in enumerate(stripsPu):
+        #     contours += self.find_contours(strip, threshsCnt[i], offset=(0,hUs*i),debug=self.debug)
+        if ground_detected:
+            contour_thresh = 50.0
+            if(self.debug): print("[INFO] pipelineTest ---- Ground Detected -> filtering contours w/ [%.2f] threshhold" % (contour_thresh))
+        else:
+            contour_thresh = self.testCntThresh
+            if(self.debug): print("[INFO] pipelineTest ---- Ground Not Detected -> filtering contours w/ [%.2f] threshhold" % (contour_thresh))
+
+        contours = self.find_contours(umap, contour_thresh,debug=self.debug)
+
+        self.contours = contours
+        xLims, dLims, _ = self.extract_contour_bounds(contours)
+        self.xBounds = xLims
+        self.disparityBounds = dLims
+        self.filtered_contours = contours
+
+        # # ==========================================================================
+        # #							V-MAP Specific Functions
+        # # ==========================================================================
+        #
+        # stripsV = strip_image(raw_vmap, nstrips=len(threshsV), horizontal_strips=False)
+        # self.stripsV_raw = np.copy(stripsV)
+        #
+        # stripsPv = []
+        # for i, strip in enumerate(stripsV):
+        #     # _, tmpStrip = cv2.threshold(strip, threshsV[i], 255,cv2.THRESH_BINARY)
+        #     _, tmpStrip = cv2.threshold(strip, threshsV[i], 255,cv2.THRESH_TOZERO)
+        #     stripsPv.append(tmpStrip)
+        #
+        # vsThs = np.array([
+        #     [0.3, 0.0],
+        #     [0.5, 0.0]
+        # ])
+        #
+        # tmpMax = np.max(stripsPv[0])
+        # stripsPv[0][stripsPv[0] < np.max(stripsPv[0]*0.035)] = 0
+        #
+        # top_strip = stripsPv[0][0:100, :]
+        # bot_strip = stripsPv[0][100:stripsPv[0].shape[0], :]
+        #
+        # top_strip[top_strip < tmpMax*vsThs[0,0]] = 0
+        # bot_strip[bot_strip < tmpMax*vsThs[0,1]] = 0
+        # stripsPv[0] = np.concatenate((top_strip,bot_strip), axis=0)
+        #
+        # dw = self.dW;        vdTh = [dths[3], 0]
+        #
+        # dead_strip = stripsPv[0][:, 0:dw]
+        # rest_strip = stripsPv[0][:,dw:stripsPv[0].shape[1]]
+        #
+        # dead_strip[dead_strip < tmpMax*vdTh[0]] = 0
+        # rest_strip[rest_strip < tmpMax*vdTh[1]] = 0
+        # stripsPv[0] = np.concatenate((dead_strip,rest_strip), axis=1)
+        #
+        # # stripsPv[1][stripsPv[1] < np.max(stripsPv[1]*0.9)] = 0
+        # tmpMax = np.max(stripsPv[1])
+        # tH = stripsPv[1].shape[0]
+        # top_strip = stripsPv[1][0:tH/3, :]
+        # bot_strip = stripsPv[1][tH/3:tH, :]
+        #
+        # top_strip[top_strip < tmpMax*vsThs[1,0]] = 0
+        # bot_strip[bot_strip < tmpMax*vsThs[1,1]] = 0
+        # stripsPv[1] = np.concatenate((top_strip,bot_strip), axis=0)
+        #
+        # self.stripsV_processed = np.copy(stripsPv)
+        # newV = np.concatenate(stripsPv, axis=1)
+        # try: tmpV = cv2.cvtColor(newV, cv2.COLOR_BGR2GRAY)
+        # except:
+        #     tmpV = newV
+        #     print("[WARNING] ------------  Unnecessary Umap Color Converting")
+        #
+        # self.vmap_filtered = np.copy(tmpV)
+        #
+        # ground_detected, mask, maskInv,mPxls, ground_wins,_ = self.get_vmap_mask(newV, maxStep = 16)
+        # vmap = cv2.bitwise_and(newV,newV,mask=maskInv)
+        #
+        # try: vmap = cv2.cvtColor(vmap, cv2.COLOR_BGR2GRAY)
+        # except: print("[WARNING] ------------  Unnecessary Vmap Color Converting")
+        #
+        # self.vmask = np.copy(mask)
+        # self.vmap_processed = np.copy(vmap)
+        # # =========================================================================
 
         # print("[INFO] Beginning Obstacle Search....")
         obs, obsU, ybounds, dbounds, windows, nObs = self.find_obstacles(vmap, dLims, xLims, ground_detected=ground_detected,verbose=self.debug)
