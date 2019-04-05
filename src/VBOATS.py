@@ -60,8 +60,10 @@ class VBOATS:
             (75,1)
         ]
         self.deadUThresh = 0.8
-        self.testCntThresh = 30.0
+        self.testLowCntThresh = 30.0
+        self.testHighCntThresh = 50.0
         self.testRestThreshRatio = 0.5
+        self.testMaxGndStep = 16
         self.is_ground_present = True
         # Counters
         self.nObs = 0
@@ -465,59 +467,66 @@ class VBOATS:
 
         newStrip = np.concatenate(newStrips, axis=0)
         return newStrip
-
-    def test_filter_first_umap_strip(self,umap_strip,max_value,thresholds,ratio_thresh=0.5,base_thresh=35):
+    def test_filter_first_umap_strip(self,umap_strip,max_value,thresholds,ratio_thresh=0.25,base_thresh=35):
         try: umap_strip = cv2.cvtColor(umap_strip,cv2.COLOR_BGR2GRAY)
         except: print("[WARNING] test_filter_first_umap_strip() ------  Unnecessary Strip Color Conversion BGR -> Gray")
         n = len(thresholds)
         strip = np.copy(umap_strip)
-        stripMax = np.max(strip)
-
-        hs, ws = strip.shape[:2]
-        dh = hs / n
-
+        hs, ws = strip.shape[:2];             dh = hs / n
         dead_strip = strip[0:dh, :]
         rest_strip = strip[dh:hs, :]
+        oDead = np.copy(dead_strip); oRest = np.copy(rest_strip)
 
-        oDead = np.copy(dead_strip)
-        oRest = np.copy(rest_strip)
+        hd, wd = dead_strip.shape[:2];        hr, wr = rest_strip.shape[:2]
 
+        stripMax = np.max(strip)
         deadMax = np.max(dead_strip)
+        restMax = np.max(rest_strip)
+
+        relRatio = stripMax/float(max_value)
+        dmRatio = deadMax / float(stripMax)
+        rmRatio = restMax/float(stripMax)
+
 
         deadThreshGain = (stripMax - deadMax)/255.0
         deadThreshOffset = int(base_thresh*deadThreshGain)
         deadThresh = base_thresh + deadThreshOffset
         dead_strip[dead_strip < deadThresh] = 0
+        deadMax = np.max(dead_strip)
         # print("base, gain, offset, thresh: %d, %.2f, %d, %d" % (baseDeadThresh,deadThreshGain,deadThreshOffset,deadThresh))
 
-        # Perform
-        hd, wd = dead_strip.shape[:2]
-        hr, wr = rest_strip.shape[:2]
-
+        # Perform CLAHE
         claheDead = cv2.createCLAHE(clipLimit=2.0,tileGridSize=(hd,wd))
         claheRest = cv2.createCLAHE(clipLimit=2.0,tileGridSize=(hr,wr))
 
-        clD = claheDead.apply(dead_strip)
-        clR = claheRest.apply(rest_strip)
-
-        # copyCld = np.copy(clD)
-        # copyClr = np.copy(clR)
-
         threshD = 7
-        threshR = int(ratio_thresh * np.max(clR))
+        clD = claheDead.apply(dead_strip);                #copyCld = np.copy(clD)
+        clR = claheRest.apply(rest_strip);                #copyClr = np.copy(clR)
+        _,stripD = cv2.threshold(clD, threshD,255,cv2.THRESH_TOZERO)
+        cldMax = np.max(stripD)
+        clrMax = np.max(clR)
 
-        _,stripD = cv2.threshold(clD, threshD,255,cv2.THRESH_TOZERO) # clD[clD < 7] = 0
+        if deadMax == 0: newDeadMax = 1
+        else: newDeadMax = deadMax
+        deadMaxGain = (cldMax - deadMax)/float(cldMax)
+        restMaxGain = (clrMax - restMax)/float(clrMax)
+
+        newStripMax = int(stripMax*restMaxGain)
+        newRmRatio = (restMax)/float(newStripMax)
+
+        gain = restMaxGain*ratio_thresh+ratio_thresh
+        threshR = int(gain*clrMax)
         _,stripR = cv2.threshold(clR, threshR,255,cv2.THRESH_TOZERO)
 
         newStrip = np.concatenate((stripD,stripR), axis=0)
         nStrip = np.copy(newStrip)
-
-        ksize = (15,2)
+        # pStrip = np.copy(nStrip)
+        ksize = (5,1)
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT,ksize)
         pStrip = cv2.morphologyEx(newStrip, cv2.MORPH_CLOSE, kernel)
 
-        if self.is_ground_present: cnt_thresh = 50.0
-        else: cnt_thresh = self.testCntThresh
+        if self.is_ground_present: cnt_thresh = self.testHighCntThresh
+        else: cnt_thresh = self.testLowCntThresh
 
         contours = self.find_contours(pStrip, cnt_thresh)
         disp = cv2.applyColorMap(pStrip,cv2.COLORMAP_PARULA)
@@ -529,10 +538,11 @@ class VBOATS:
         # pplots([stripsU[0],newStrip2],"CLAHE Compare",(2,1))
 
         try: newStrip = cv2.cvtColor(newStrip,cv2.COLOR_GRAY2BGR)
-        except: print("[WARNING] test_filter_first_umap_strip() ------  Unnecessary Strip Color Conversion Gray -> BGR")
+        except: print("[WARNING] test_filter_first_umap_strip() ------  Unnecessary Strip Color Conversion Gray -> BGR for \'newStrip\'")
+        try: pStrip = cv2.cvtColor(pStrip,cv2.COLOR_GRAY2BGR)
+        except: print("[WARNING] test_filter_first_umap_strip() ------  Unnecessary Strip Color Conversion Gray -> BGR for \'pStrip\'")
 
-        return newStrip, strip, nStrip, disp
-
+        return newStrip, strip, nStrip,pStrip, disp
 
     def pipeline(self, _img, threshU1=7, threshU2=20,threshV2=70, timing=False):
         """
@@ -794,7 +804,7 @@ class VBOATS:
 
         self.vmap_filtered = np.copy(tmpV)
 
-        ground_detected, mask, maskInv,mPxls, ground_wins,_ = self.get_vmap_mask(newV, maxStep = 16)
+        ground_detected, mask, maskInv,mPxls, ground_wins,_ = self.get_vmap_mask(newV, maxStep = self.testMaxGndStep)
         vmap = cv2.bitwise_and(newV,newV,mask=maskInv)
 
         try: vmap = cv2.cvtColor(vmap, cv2.COLOR_BGR2GRAY)
@@ -822,7 +832,7 @@ class VBOATS:
                 # stripThreshs = [0.15, 0.15, 0.075, 0.065,0.025,0.025]
                 stripThreshs = [0.15, 0.15, 0.075, 0.065,0.05,0.025]
                 # tmpStrip = self.filter_first_umap_strip(strip,maxdisparity,stripThreshs)
-                tmpStrip,_,_,_ = self.test_filter_first_umap_strip(strip,maxdisparity,stripThreshs, ratio_thresh=self.testRestThreshRatio)
+                _,_,_,tmpStrip,_ = self.test_filter_first_umap_strip(strip,maxdisparity,stripThreshs, ratio_thresh=self.testRestThreshRatio)
             else:
                 tmpMax = np.max(strip)
                 tmpThresh = threshsU[i] * tmpMax
@@ -877,10 +887,10 @@ class VBOATS:
         # for i, strip in enumerate(stripsPu):
         #     contours += self.find_contours(strip, threshsCnt[i], offset=(0,hUs*i),debug=self.debug)
         if ground_detected:
-            contour_thresh = 50.0
+            contour_thresh = self.testHighCntThresh
             if(self.debug): print("[INFO] pipelineTest ---- Ground Detected -> filtering contours w/ [%.2f] threshhold" % (contour_thresh))
         else:
-            contour_thresh = self.testCntThresh
+            contour_thresh = self.testLowCntThresh
             if(self.debug): print("[INFO] pipelineTest ---- Ground Not Detected -> filtering contours w/ [%.2f] threshhold" % (contour_thresh))
 
         contours = self.find_contours(umap, contour_thresh,debug=self.debug)
