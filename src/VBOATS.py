@@ -62,7 +62,7 @@ class VBOATS:
         self.deadUThresh = 0.8
         self.testLowCntThresh = 30.0
         self.testHighCntThresh = 50.0
-        self.testRestThreshRatio = 0.5
+        self.testRestThreshRatio = 0.25
         self.testMaxGndStep = 16
         self.is_ground_present = True
         # Counters
@@ -490,14 +490,16 @@ class VBOATS:
 
         deadThreshGain = (stripMax - deadMax)/255.0
         deadThreshOffset = int(base_thresh*deadThreshGain)
-        deadThresh = base_thresh + deadThreshOffset
+        if not self.is_ground_present: deadThresh = deadThreshOffset
+        else: deadThresh = base_thresh + deadThreshOffset
+
         dead_strip[dead_strip < deadThresh] = 0
         deadMax = np.max(dead_strip)
         # print("base, gain, offset, thresh: %d, %.2f, %d, %d" % (baseDeadThresh,deadThreshGain,deadThreshOffset,deadThresh))
 
         # Perform CLAHE
         claheDead = cv2.createCLAHE(clipLimit=2.0,tileGridSize=(hd,wd))
-        claheRest = cv2.createCLAHE(clipLimit=2.0,tileGridSize=(hr,wr))
+        claheRest = cv2.createCLAHE(clipLimit=2.0,tileGridSize=(hr/2,wr))
 
         threshD = 7
         clD = claheDead.apply(dead_strip);                #copyCld = np.copy(clD)
@@ -514,8 +516,10 @@ class VBOATS:
         newStripMax = int(stripMax*restMaxGain)
         newRmRatio = (restMax)/float(newStripMax)
 
-        gain = restMaxGain*ratio_thresh+ratio_thresh
-        threshR = int(gain*clrMax)
+        gain1 = restMaxGain*ratio_thresh
+        gain2 = gain1+ratio_thresh
+        threshR = int(gain2*clrMax)
+        threshR = threshR - int(gain1*threshR)
         _,stripR = cv2.threshold(clR, threshR,255,cv2.THRESH_TOZERO)
 
         newStrip = np.concatenate((stripD,stripR), axis=0)
@@ -703,7 +707,7 @@ class VBOATS:
         ============================================================================
         """
         dt = 0
-        threshsU = [threshU1, threshU2, 0.3, 0.4,0.4,0.4]
+        threshsU = [threshU1, threshU2, 0.3, 0.5,0.4,0.4]
         threshsV = [threshV1, threshV2, 40,40,40]
         threshsCnt = [15.0,100.0,80.0,80.0,40.0,40.0]
 
