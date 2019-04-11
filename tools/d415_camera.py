@@ -6,16 +6,16 @@ import matplotlib.pyplot as plt
 pp = pprint.PrettyPrinter(indent=4)
 
 class CameraD415(object):
-    def __init__(self, flag_save=0,use_statistics=0):
-        self.fps = 60
+    def __init__(self, flag_save=False,use_statistics=False, fps=60,depth_resolution=(640,480),rgb_resolution=(640,480)):
+        self.fps = fps
         self.flag_save = flag_save
         self.frames = None
 
         # Attempt to establish camera configuration
         try:
             self.config = rs.config()
-            self.config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, self.fps)
-            self.config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, self.fps)
+            self.config.enable_stream(rs.stream.depth, depth_resolution[0], depth_resolution[1], rs.format.z16, self.fps)
+            self.config.enable_stream(rs.stream.color, rgb_resolution[0], rgb_resolution[1], rs.format.bgr8, self.fps)
         except:
             self.config = None
             print("[ERROR] Could not establish CameraD415 Config!")
@@ -129,7 +129,7 @@ class CameraD415(object):
         return avg
 
 if __name__ == '__main__':
-    cam = CameraD415(flag_save=1,use_statistics=0)
+    cam = CameraD415(flag_save=True,use_statistics=False)
     print("Looping...")
     cam.loop()
     print("Exiting...")
