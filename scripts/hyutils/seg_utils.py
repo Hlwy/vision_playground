@@ -11,54 +11,6 @@ import numpy as np
 import os
 import cv2
 
-
-def crop_bottom_half(image):
-	cropped_img = image[image.shape[0]/2:image.shape[0]]
-	return cropped_img
-
-def crop_bottom_two_thirds(image):
-	cropped_img = image[image.shape[0]/6:image.shape[0]]
-	return cropped_img
-
-def crop_below_pixel(image, y_pixel):
-	cropped_img = image[y_pixel:image.shape[0]]
-	return cropped_img
-
-def horizontal_hist(_img, method=0):
-	if method == 1:		# Take a histogram of the bottom half of the image
-		hist = np.sum(_img[_img.shape[0]//2:,:], axis=0)
-	elif method == 2:	# Take a histogram of the top half of the image
-		hist = np.sum(_img[0:_img.shape[0]//2,:], axis=0)
-	else:				# Take a histogram of the whole image
-		hist = np.sum(_img[:,:], axis=0)
-	return hist
-
-def vertical_hist(_img, method=0):
-	if method == 1:			# Take a histogram of the left half of the image
-		hist = np.sum(_img[_img.shape[1]//2:,:], axis=1)
-	elif method == 2:		# Take a histogram of the right half of the image
-		hist = np.sum(_img[0:_img.shape[1]//2,:], axis=1)
-	else:					# Take a histogram of the whole image
-		hist = np.sum(_img[:,:], axis=1)
-	return hist
-
-
-def custom_hist(_img, rows=[0,0], cols=[0,0], axis=0,flag_plot=False):
-	# Take a histogram of the whole image
-	hist = np.sum(_img[rows[0]:rows[1],cols[0]:cols[1]], axis=axis)
-
-	# print("Histogram Shape: ", hist.shape)
-
-	if flag_plot == True:
-		plt.figure(1)
-		plt.clf()
-		plt.title('Histogram of the image')
-		plt.plot(range(hist.shape[0]), hist[:])
-		# plt.plot(range(hist.shape[0]), hist[:,1])
-		# plt.plot(range(hist.shape[0]), hist[:,2])
-
-	return hist
-
 def find_row_ends(hist,xbuffer=100):
 	xmidL = 0; xmidR = 0; xmid = 0
 	leftFound = False
@@ -211,34 +163,6 @@ def find_lowest_contours(contourL, contourR,verbose=False):
 		print("Contour Mins: ", leftYMin,rightYMin)
 	return [leftYMin, rightYMin]
 
-def histogram_sliding_filter(hist, window_size=16, flag_plot=False):
-	avg_hist = np.zeros_like(hist).astype(np.int32)
-	sliding_window = np.ones((window_size,))/window_size
-
-	try:
-		n, depth = hist.shape
-	except:
-		n = hist.shape
-		depth = None
-
-	if flag_plot == True:
-		plt.figure(1)
-		plt.clf()
-		plt.title('Smoothed Histogram of the image')
-
-	if depth == None:
-		avg_hist = np.convolve(hist[:], sliding_window , mode='same')
-		if flag_plot == True:
-			plt.plot(range(avg_hist.shape[0]), avg_hist[:])
-	else:
-		for channel in range(depth):
-			tmp_hist = np.convolve(hist[:,channel], sliding_window , mode='same')
-			avg_hist[:,channel] = tmp_hist
-			if flag_plot == True:
-				plt.plot(range(avg_hist.shape[0]), avg_hist[:,channel])
-				# plt.plot(range(avg_hist.shape[0]), avg_hist[:,1])
-				# plt.plot(range(avg_hist.shape[0]), avg_hist[:,2])
-	return avg_hist
 
 def find_horizon_simple(v_hist,window_size=16):
 	minval = [0,0]
@@ -475,39 +399,6 @@ def is_horizon_present(img, nrows=10, verbose=False, flag_plot=False):
 		plt.plot(range(hist_left.shape[0]), hist_left[:,2])
 
 	return flag
-
-
-def strip_image(_img, nstrips=48, horizontal_strips=True, verbose=False):
-	strips = []
-	h,w = _img.shape[:2]
-	if(verbose): print("[INFO] strip_image() ---- Input Image Shape: %s" % (str(_img.shape)))
-
-	if horizontal_strips == True:
-		strip_widths = h // nstrips
-		axis = 0
-		maxDim = h
-	else:
-		strip_widths = w // nstrips
-		axis = 1
-		maxDim = w
-
-	if verbose: print("[INFO] strip_image() ---- Strips Info:")
-	for strip_number in range(nstrips):
-		dim1 = (strip_number*strip_widths)
-		dim2 = (strip_number+1)*(strip_widths)
-		if strip_number == (nstrips-1):
-			diff = maxDim - dim2
-			dim2 += diff
-			if verbose: print("\tStrip [%d] MaxDim, DimDiff, Dim2: %d, %d, %d" % (strip_number, maxDim, diff, dim2))
-
-		if horizontal_strips == True: tmp = _img[dim1:dim2, :]
-		else: tmp = _img[:, dim1:dim2]
-
-		strips.append(tmp)
-		if verbose: print("\tStrip [%d] Dim1, Dim2, Strip Shape: %d, %d, %s" % (strip_number, dim1, dim2, str(tmp.shape)))
-	testImg = np.concatenate(strips, axis=axis)
-	if(verbose): print("[INFO] strip_image() ---- Strip Width, Resulting Image Shape: %d, %s" % (strip_widths,str(testImg.shape)))
-	return strips
 
 
 def histogram_strips(_img, nstrips=48, horizontal_strips=True):
