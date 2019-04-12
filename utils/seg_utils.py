@@ -478,15 +478,35 @@ def is_horizon_present(img, nrows=10, verbose=False, flag_plot=False):
 
 
 def strip_image(_img, nstrips=48, horizontal_strips=True, verbose=False):
+	strips = []
 	h,w = _img.shape[:2]
+	if(verbose): print("[INFO] strip_image() ---- Input Image Shape: %s" % (str(_img.shape)))
 
 	if horizontal_strips == True:
 		strip_widths = h // nstrips
-		strips = [_img[(strip_number*strip_widths):(strip_number+1)*(strip_widths), :] for strip_number in range(nstrips)]
+		axis = 0
+		maxDim = h
 	else:
 		strip_widths = w // nstrips
-		strips = [_img[:, (strip_number*strip_widths):(strip_number+1)*(strip_widths)] for strip_number in range(nstrips)]
-	if(verbose): print("[strip_image] --- todo")
+		axis = 1
+		maxDim = w
+
+	if verbose: print("[INFO] strip_image() ---- Strips Info:")
+	for strip_number in range(nstrips):
+		dim1 = (strip_number*strip_widths)
+		dim2 = (strip_number+1)*(strip_widths)
+		if strip_number == (nstrips-1):
+			diff = maxDim - dim2
+			dim2 += diff
+			if verbose: print("\tStrip [%d] MaxDim, DimDiff, Dim2: %d, %d, %d" % (strip_number, maxDim, diff, dim2))
+
+		if horizontal_strips == True: tmp = _img[dim1:dim2, :]
+		else: tmp = _img[:, dim1:dim2]
+
+		strips.append(tmp)
+		if verbose: print("\tStrip [%d] Dim1, Dim2, Strip Shape: %d, %d, %s" % (strip_number, dim1, dim2, str(tmp.shape)))
+	testImg = np.concatenate(strips, axis=axis)
+	if(verbose): print("[INFO] strip_image() ---- Strip Width, Resulting Image Shape: %d, %s" % (strip_widths,str(testImg.shape)))
 	return strips
 
 

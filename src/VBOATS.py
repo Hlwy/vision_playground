@@ -46,7 +46,7 @@ class VBOATS:
         self.window_size = [10,30]
         self.vmap_search_window_height = 10
         self.mask_size = [20,40]
-        self.dead_x = 0
+        self.dead_x = 3
         self.dead_y = 3
         self.dH = 4
         self.dW = 5
@@ -70,7 +70,9 @@ class VBOATS:
         # Flags
         self.flag_simulation = False
         self.flag_morphs = True
-        self.debug = True
+        self.debug = False
+        self.debug_windows = False
+        self.debug_obstacle_search = False
     def get_uv_map(self, img, verbose=False, timing=False):
         """ ===================================================================
         Create the UV Disparity Mappings from a given depth (disparity) image
@@ -144,11 +146,9 @@ class VBOATS:
         	Find contours in image and filter out those above a certain threshold
         ============================================================================
         """
-        try: umap = cv2.cvtColor(_umap,cv2.COLOR_BGR2GRAY)
-        except:
-            umap = _umap
-            print("[WARNING] find_contours --- Unnecessary Image Color Converting")
-            pass
+        umap = np.copy(_umap)
+        # try: umap = cv2.cvtColor(_umap,cv2.COLOR_BGR2GRAY)
+        # except: print("[WARNING] find_contours --- Unnecessary Image Color Converting")
 
         _, contours, hierarchy = cv2.findContours(umap,cv2.RETR_TREE,cv2.CHAIN_APPROX_SIMPLE,offset=offset)
 
@@ -183,7 +183,7 @@ class VBOATS:
             xs = xLims[i]
             ds = dLims[i]
             ys,ws,_ = self.obstacle_search(vmap, ds, search_thresholds,verbose=verbose)
-            if self.debug: print("Y Limits[",len(ys),"]: ", ys)
+            if self.debug_obstacle_search: print("Y Limits[",len(ys),"]: ", ys)
             if(len(ys) <= 2 and ground_detected):
                 if(verbose): print("[INFO] Found obstacle with zero height. Skipping...")
             elif(len(ys) <= 1):
@@ -300,7 +300,7 @@ class VBOATS:
             yk = yk + 2*dWy
             count += 1
 
-        print("[%d] Good Windows" % nWindows)
+        if(verbose): print("[%d] Good Windows" % nWindows)
         if(timing):
             t1 = time.time()
             dt = t1 - t0
@@ -321,22 +321,22 @@ class VBOATS:
         # Sizes
         h,w = vmap.shape[:2]
         dWy,dWx = np.int32(window_size)/2
+        dWyO,dWxO = np.int32(window_size)/2
         dMy,dMx = np.int32(mask_size)/2
         dx,dy = np.int32(deltas)
         # ==========================================================================
 
         # Create a black template to create mask with
-        black = np.zeros((h,w-1,3),dtype=np.uint8)
+        black = np.zeros((h,w,3),dtype=np.uint8)
 
         if(timing): t0 = time.time()
         # ==========================================================================
 
-        print("[INFO] get_vmap_mask() ---- vmap shape (H,W,C): %s" % (str(vmap.shape)))
+        if(verbose): print("[INFO] get_vmap_mask() ---- vmap shape (H,W,C): %s" % (str(vmap.shape)))
         # Take the bottom strip of the input image to find potential points to start sliding from
         y0 = abs(int(h-dy))
-        print("y0: %s" % (str(y0)))
         hist = np.sum(vmap[y0:h,0:w], axis=0)
-        print("[INFO] get_vmap_mask() ---- hist shape (H,W,C): %s" % (str(hist.shape)))
+        if(verbose): print("[INFO] get_vmap_mask() ---- hist shape (H,W,C): %s" % (str(hist.shape)))
         try:
             x0 = abs(int(np.argmax(hist[:,0])))
         except:
@@ -396,17 +396,36 @@ class VBOATS:
                 if mean_count == 0: mean_pxls.append(np.array([xmean,h]))
                 else: mean_pxls.append(np.array([xmean,ymean]))
 
+                dXmean = xmean - prev_xmean
+
+                yk = yk - 2*dWy
+                if dXmean < -3: xk = xk + dWx/2
+                else: xk = xmean + dWx/2
+
+                if dXmean > 3: xk += 5
+                elif dXmean == 3: xk += 3
                 # Draw current window onto mask template
                 my_low = ymean - dMy;          	my_high = ymean + dMy
                 mx_low = xmean - dMx; 			mx_high = xmean + dMx
                 masks.append([ (mx_low,my_high), (mx_high,my_low) ])
                 # Update New window center coordinates
-                xk = xmean + dWx
-                yk = ymean - 2*dWy
-                dXmean = xmean - prev_xmean
+                # dchange =
+                # tmpDx = dWx
+                if dXmean > 3: dWx = dWxO + 6
+                elif 1 < dXmean <= 3: dWx = dWxO + 3
+                else: dWx = dWxO
+
+                if(verbose): print("dXmean, dWx [%d]: %.3f, %d" % (mean_count,dXmean,dWx))
+                # xk = xmean + dWx/2
+                # yk = yk - 2*dWy
+
+                # # Previous Method
+                # xk = xmean + dWx
+                # yk = ymean - 2*dWy
                 mean_sum += dXmean
                 mean_count += 1
                 prev_xmean = xmean
+                # dWx = dWxT
             else: flag_done = True
             count += 1
         if mean_count == 0: mean_count = 1
@@ -423,6 +442,9 @@ class VBOATS:
             if(draw_method == 1):
                 pts = cv2.approxPolyDP(mean_pxls,3,0)
                 cv2.polylines(black, [pts], 0, (255,255,255),lWidth)
+                tmpPxl = np.array([ [mean_pxls[-1,0],mean_pxls[0,1]] ])
+                tmpPxls = np.concatenate((mean_pxls,tmpPxl), axis=0)
+                cv2.fillPoly(black, [tmpPxls], (255,255,255))
             else:
                 for mask in masks:
                     cv2.rectangle(black,mask[0],mask[1],(255,255,255), cv2.FILLED)
@@ -488,7 +510,8 @@ class VBOATS:
 
         hd, wd = dead_strip.shape[:2];        hr, wr = rest_strip.shape[:2]
 
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT,(75,2))
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT,(40,1))
+        kernel2 = cv2.getStructuringElement(cv2.MORPH_RECT,(75,3))
         tfa = int(0.75*max_value);
         # print("tfa: %d" %(tfa))
 
@@ -503,15 +526,16 @@ class VBOATS:
         pc1 = dCl[0:1, :]
         pc2 = dCl[1:dCl.shape[0], :]
 
-        _,pc1 = cv2.threshold(pc1, 200,255,cv2.THRESH_TOZERO)
+        # _,pc1 = cv2.threshold(pc1, 200,255,cv2.THRESH_TOZERO)
+        _,pc1 = cv2.threshold(pc1, 256,255,cv2.THRESH_TOZERO)
         _,pc2 = cv2.threshold(pc2, 128,255,cv2.THRESH_TOZERO)
 
-        fa = np.concatenate((pc1,pc2), axis=0);
+        tmpdead = np.concatenate((pc1,pc2), axis=0);
 
-        # mask = cv2.morphologyEx(fa, cv2.MORPH_CLOSE, kernel)
-        tmprest = cv2.morphologyEx(tmprest, cv2.MORPH_CLOSE, kernel)
+        tmpdead = cv2.morphologyEx(tmpdead, cv2.MORPH_CLOSE, kernel)
+        tmprest = cv2.morphologyEx(tmprest, cv2.MORPH_CLOSE, kernel2)
 
-        dead_strip = np.concatenate((fa,tmprest), axis=0);
+        dead_strip = np.concatenate((tmpdead,tmprest), axis=0);
 
         stripMax = np.max(strip)
         deadMax = np.max(dead_strip)
@@ -565,17 +589,14 @@ class VBOATS:
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT,ksize)
         pStrip = cv2.morphologyEx(newStrip, cv2.MORPH_CLOSE, kernel)
 
-        if self.is_ground_present: cnt_thresh = self.testHighCntThresh
-        else: cnt_thresh = self.testLowCntThresh
+        # if self.is_ground_present: cnt_thresh = self.testHighCntThresh
+        # else: cnt_thresh = self.testLowCntThresh
 
-        contours = self.find_contours(pStrip, cnt_thresh)
-        disp = cv2.applyColorMap(pStrip,cv2.COLORMAP_PARULA)
-        disp = cv2.cvtColor(disp,cv2.COLOR_BGR2RGB)
-        [cv2.drawContours(disp, [cnt], 0, (255,0,0), 1) for cnt in contours]
-
-        # print("testMax2, testThresh2: %d, %d" % (testMax2,testThresh2))
-        # pplots([orig,dead_strip,dcl,dcl2],"Test",(4,1))
-        # pplots([stripsU[0],newStrip2],"CLAHE Compare",(2,1))
+        # contours = self.find_contours(pStrip, cnt_thresh)
+        # disp = cv2.applyColorMap(pStrip,cv2.COLORMAP_PARULA)
+        # disp = cv2.cvtColor(disp,cv2.COLOR_BGR2RGB)
+        # [cv2.drawContours(disp, [cnt], 0, (255,0,0), 1) for cnt in contours]
+        disp = []
 
         try: newStrip = cv2.cvtColor(newStrip,cv2.COLOR_GRAY2BGR)
         except: print("[WARNING] test_filter_first_umap_strip() ------  Unnecessary Strip Color Conversion Gray -> BGR for \'newStrip\'")
@@ -759,29 +780,16 @@ class VBOATS:
         dead_x = self.dead_x; dead_y = self.dead_y
 
         raw_umap, raw_vmap, dt = self.get_uv_map(img)
+        # print("[INFO] pipelineTest() ---- generated vmap shape (H,W,C): %s" % (str(raw_vmap.shape)))
         self.umap_raw = np.copy(raw_umap)
         self.vmap_raw = np.copy(raw_vmap)
         # =========================================================================
-        deadzoneU = raw_umap[1:dead_y+1, :]
-        deadMax = np.max(deadzoneU)
-        deadThresh = deadMax * self.deadUThresh
-        if deadThresh < self.deadThreshMin: deadThresh = self.deadThreshMin
-
-        if(self.debug):
-            print("Umap Deadzone [%dx%d] Max, Thresholded: %d, %d" % (deadzoneU.shape[0], deadzoneU.shape[1],deadMax,deadThresh))
-        # _, deadzoneU = cv2.threshold(deadzoneU, deadThresh, 255,cv2.THRESH_BINARY)
-        _, deadzoneU = cv2.threshold(deadzoneU, deadThresh, 255,cv2.THRESH_TOZERO)
-
-        # cv2.rectangle(raw_umap,(0,0),(raw_umap.shape[1],dead_y),(0,0,0), cv2.FILLED)
-        # cv2.rectangle(raw_umap,(0,raw_umap.shape[0]-dead_y),(raw_umap.shape[1],raw_umap.shape[0]),(0,0,0), cv2.FILLED)
-
-        cv2.rectangle(raw_vmap,(0,0),(dead_x, raw_vmap.shape[0]),(0,0,0), cv2.FILLED)
+        cv2.rectangle(raw_umap,(0,raw_umap.shape[0]-dead_y),(raw_umap.shape[1],raw_umap.shape[0]),(0,0,0), cv2.FILLED)
         cv2.rectangle(raw_vmap,(raw_vmap.shape[1]-dead_x,0),(raw_vmap.shape[1],raw_vmap.shape[0]),(0,0,0), cv2.FILLED)
         # =========================================================================
-        if(self.flag_simulation): _, raw_umap = cv2.threshold(raw_umap, 35, 255,cv2.THRESH_TOZERO)
+        # if(self.flag_simulation): _, raw_umap = cv2.threshold(raw_umap, 35, 255,cv2.THRESH_TOZERO)
         self.umap_deadzoned = np.copy(raw_umap)
         self.vmap_deadzoned = np.copy(raw_vmap)
-        # _, raw_umap = cv2.threshold(raw_umap, 10, 255,cv2.THRESH_TOZERO)
         try:
             raw_umap = cv2.cvtColor(raw_umap,cv2.COLOR_GRAY2BGR)
             raw_vmap = cv2.cvtColor(raw_vmap,cv2.COLOR_GRAY2BGR)
@@ -790,26 +798,19 @@ class VBOATS:
         # ==========================================================================
         #							V-MAP Specific Functions
         # ==========================================================================
-        try:
-            # tmpWin = cv2.cvtColor(raw_vmap,cv2.COLOR_BGR2GRAY)
-            tmpWin = cv2.cvtColor(raw_vmap,cv2.COLOR_GRAY2BGR)
-        except:
-            tmpWin = np.copy(raw_vmap)
-            print("[WARNING] ------------  Unnecessary Raw Mappings Color Converting")
-
-        ground_detected, mask, maskInv,mPxls, ground_wins,_ = self.get_vmap_mask(tmpWin, maxStep = self.testMaxGndStep, window_size=[10,10])
+        ground_detected, mask, maskInv,mPxls, ground_wins,_ = self.get_vmap_mask(raw_vmap, maxStep = self.testMaxGndStep, window_size=[15,15])
 
         stripsPv = []
         stripsV = strip_image(raw_vmap, nstrips=len(threshsV), horizontal_strips=False)
-        self.stripsV_raw = np.copy(stripsV)
+        self.stripsV_raw = list(stripsV)
+        # print("[INFO] raw_vmap shape: %s" % (str(raw_vmap.shape)))
 
         for i, strip in enumerate(stripsV):
-            # _, tmpStrip = cv2.threshold(strip, threshsV[i], 255,cv2.THRESH_BINARY)
             _, tmpStrip = cv2.threshold(strip, threshsV[i], 255, cv2.THRESH_TOZERO)
             stripsPv.append(tmpStrip)
 
         vsThs = np.array([
-            [0.3, 0.0],
+            [0.25, 0.0],
             [0.5, 0.0]
         ])
 
@@ -829,9 +830,13 @@ class VBOATS:
         dead_strip = stripsPv[0][:, 0:dw]
         rest_strip = stripsPv[0][:,dw:stripsPv[0].shape[1]]
 
+        # print("[INFO] Shapes stripsPv[0], dead_strip, rest_strip: %s, %s, %s" % (str(stripsPv[0].shape), str(dead_strip.shape),str(rest_strip.shape)))
+
         dead_strip[dead_strip < tmpMax*vdTh[0]] = 0
         rest_strip[rest_strip < tmpMax*vdTh[1]] = 0
         stripsPv[0] = np.concatenate((dead_strip,rest_strip), axis=1)
+
+        # print("[INFO] stripsPv[0] shape: %s" % (str(stripsPv[0].shape)))
 
         # stripsPv[1][stripsPv[1] < np.max(stripsPv[1]*0.9)] = 0
         tmpMax = np.max(stripsPv[1])
@@ -843,8 +848,10 @@ class VBOATS:
         bot_strip[bot_strip < tmpMax*vsThs[1,1]] = 0
         stripsPv[1] = np.concatenate((top_strip,bot_strip), axis=0)
 
-        self.stripsV_processed = np.copy(stripsPv)
+        self.stripsV_processed = list(stripsPv)
         newV = np.concatenate(stripsPv, axis=1)
+        # print("[INFO] newV shape: %s" % (str(newV.shape)))
+
         try: tmpV = cv2.cvtColor(newV, cv2.COLOR_BGR2GRAY)
         except:
             tmpV = newV
@@ -854,11 +861,11 @@ class VBOATS:
 
         # ground_detected, mask, maskInv,mPxls, ground_wins,_ = self.get_vmap_mask(newV, maxStep = self.testMaxGndStep, window_size=[10,10])
         tmp = np.copy(tmpV)
-        print(tmp.shape, maskInv.shape)
+        # print(tmp.shape, maskInv.shape)
         vmap = cv2.bitwise_and(tmp,tmp,mask=maskInv)
 
-        try: vmap = cv2.cvtColor(vmap, cv2.COLOR_BGR2GRAY)
-        except: print("[WARNING] ------------  Unnecessary Vmap Color Converting")
+        # try: vmap = cv2.cvtColor(vmap, cv2.COLOR_BGR2GRAY)
+        # except: print("[WARNING] ------------  Unnecessary Vmap Color Converting")
 
         self.vmask = np.copy(mask)
         self.vmap_processed = np.copy(vmap)
@@ -871,7 +878,7 @@ class VBOATS:
         # ==========================================================================
 
         stripsU = strip_image(raw_umap, nstrips=len(threshsU))
-        self.stripsU_raw = np.copy(stripsU)
+        self.stripsU_raw = list(stripsU)
 
         stripsPu = []
         for i, strip in enumerate(stripsU):
@@ -886,49 +893,23 @@ class VBOATS:
             else:
                 tmpMax = np.max(strip)
                 tmpThresh = threshsU[i] * tmpMax
-                if(self.debug): print("Umap Strip [%d] Max, Thresholded: %d, %d" % (i,tmpMax,tmpThresh))
-                # _, tmpStrip = cv2.threshold(strip, threshsU[i], 255,cv2.THRESH_BINARY)
+                # if(self.debug): print("Umap Strip [%d] Max, Thresholded: %d, %d" % (i,tmpMax,tmpThresh))
                 _, tmpStrip = cv2.threshold(strip, tmpThresh, 255,cv2.THRESH_TOZERO)
+                # _, tmpStrip = cv2.threshold(strip, threshsU[i], 255,cv2.THRESH_BINARY)
             stripsPu.append(tmpStrip)
 
         ksz1 = self.kszs[0]
+        kernel0 = cv2.getStructuringElement(cv2.MORPH_RECT,(1,2))
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT,ksz1)
-        stripsPu[0] = cv2.morphologyEx(stripsPu[0], cv2.MORPH_CLOSE, kernel)
+        stripsPu[0] = cv2.morphologyEx(stripsPu[0], cv2.MORPH_CLOSE, kernel0)
         stripsPu[1] = cv2.morphologyEx(stripsPu[1], cv2.MORPH_CLOSE, kernel)
         stripsPu[2] = cv2.morphologyEx(stripsPu[2], cv2.MORPH_OPEN, kernel)
 
         hUs,w = stripsPu[0].shape[:2]
-        # blankStrip = np.zeros((hUs-dead_y,w),dtype=np.uint8)
-        # deadzone_mask = np.concatenate((deadzoneU,blankStrip), axis=0)
-        # try: deadzone_mask = cv2.cvtColor(deadzone_mask, cv2.COLOR_GRAY2BGR)
-        # except: print("[WARNING] ------------  Unnecessary Deadzone Image Color Converting")
-        #
-        # if self.flag_morphs:
-        #     ksz2 = self.kszs[1]
-        #     kernelD = cv2.getStructuringElement(cv2.MORPH_RECT,ksz2)
-        #     deadzone_mask = cv2.morphologyEx(deadzone_mask, cv2.MORPH_CLOSE, kernelD)
-        #     stripsPu[0] = cv2.addWeighted(stripsPu[0], 1.0, deadzone_mask, 1.0, 0)
 
-        # tmpMax = np.max(stripsPu[0])
-        # dead_strip = stripsPu[0][0:dH, :]
-        # mid_strip = stripsPu[0][dH:dHplus, :]
-        # rest_strip = stripsPu[0][dHplus:stripsPu[0].shape[0], :]
-        #
-        # usThs = np.array([ [dths[0], dths[1], dths[2]] ])
-        #
-        # dead_strip[dead_strip < tmpMax*usThs[0,0]] = 0
-        # mid_strip[mid_strip < tmpMax*usThs[0,1]] = 0
-        # rest_strip[rest_strip < tmpMax*usThs[0,2]] = 0
-        #
-        # if self.flag_morphs:
-        #     ksz3 = self.kszs[2]
-        #     kernel = cv2.getStructuringElement(cv2.MORPH_RECT,ksz3)
-        #     rest_strip = cv2.morphologyEx(rest_strip, cv2.MORPH_CLOSE, kernel)
-        #     stripsPu[0] = np.concatenate((dead_strip,mid_strip,rest_strip), axis=0)
-
-        self.stripsU_processed = np.copy(stripsPu)
+        self.stripsU_processed = list(stripsPu)
         umap = np.concatenate(stripsPu, axis=0)
-        print(umap.shape)
+
         try: umap = cv2.cvtColor(umap, cv2.COLOR_BGR2GRAY)
         except: print("[WARNING] ------------  Unnecessary Umap Color Converting")
         self.umap_processed = np.copy(umap)
@@ -944,7 +925,6 @@ class VBOATS:
             contour_thresh = self.testLowCntThresh
             if(self.debug): print("[INFO] pipelineTest ---- Ground Not Detected -> filtering contours w/ [%.2f] threshhold" % (contour_thresh))
 
-        print(umap.shape)
         contours = self.find_contours(umap, contour_thresh,debug=self.debug)
 
         self.contours = contours
@@ -956,71 +936,10 @@ class VBOATS:
         # # ==========================================================================
         # #							V-MAP Specific Functions
         # # ==========================================================================
-        #
-        # stripsV = strip_image(raw_vmap, nstrips=len(threshsV), horizontal_strips=False)
-        # self.stripsV_raw = np.copy(stripsV)
-        #
-        # stripsPv = []
-        # for i, strip in enumerate(stripsV):
-        #     # _, tmpStrip = cv2.threshold(strip, threshsV[i], 255,cv2.THRESH_BINARY)
-        #     _, tmpStrip = cv2.threshold(strip, threshsV[i], 255,cv2.THRESH_TOZERO)
-        #     stripsPv.append(tmpStrip)
-        #
-        # vsThs = np.array([
-        #     [0.3, 0.0],
-        #     [0.5, 0.0]
-        # ])
-        #
-        # tmpMax = np.max(stripsPv[0])
-        # stripsPv[0][stripsPv[0] < np.max(stripsPv[0]*0.035)] = 0
-        #
-        # top_strip = stripsPv[0][0:100, :]
-        # bot_strip = stripsPv[0][100:stripsPv[0].shape[0], :]
-        #
-        # top_strip[top_strip < tmpMax*vsThs[0,0]] = 0
-        # bot_strip[bot_strip < tmpMax*vsThs[0,1]] = 0
-        # stripsPv[0] = np.concatenate((top_strip,bot_strip), axis=0)
-        #
-        # dw = self.dW;        vdTh = [dths[3], 0]
-        #
-        # dead_strip = stripsPv[0][:, 0:dw]
-        # rest_strip = stripsPv[0][:,dw:stripsPv[0].shape[1]]
-        #
-        # dead_strip[dead_strip < tmpMax*vdTh[0]] = 0
-        # rest_strip[rest_strip < tmpMax*vdTh[1]] = 0
-        # stripsPv[0] = np.concatenate((dead_strip,rest_strip), axis=1)
-        #
-        # # stripsPv[1][stripsPv[1] < np.max(stripsPv[1]*0.9)] = 0
-        # tmpMax = np.max(stripsPv[1])
-        # tH = stripsPv[1].shape[0]
-        # top_strip = stripsPv[1][0:tH/3, :]
-        # bot_strip = stripsPv[1][tH/3:tH, :]
-        #
-        # top_strip[top_strip < tmpMax*vsThs[1,0]] = 0
-        # bot_strip[bot_strip < tmpMax*vsThs[1,1]] = 0
-        # stripsPv[1] = np.concatenate((top_strip,bot_strip), axis=0)
-        #
-        # self.stripsV_processed = np.copy(stripsPv)
-        # newV = np.concatenate(stripsPv, axis=1)
-        # try: tmpV = cv2.cvtColor(newV, cv2.COLOR_BGR2GRAY)
-        # except:
-        #     tmpV = newV
-        #     print("[WARNING] ------------  Unnecessary Umap Color Converting")
-        #
-        # self.vmap_filtered = np.copy(tmpV)
-        #
-        # ground_detected, mask, maskInv,mPxls, ground_wins,_ = self.get_vmap_mask(newV, maxStep = 16)
-        # vmap = cv2.bitwise_and(newV,newV,mask=maskInv)
-        #
-        # try: vmap = cv2.cvtColor(vmap, cv2.COLOR_BGR2GRAY)
-        # except: print("[WARNING] ------------  Unnecessary Vmap Color Converting")
-        #
-        # self.vmask = np.copy(mask)
-        # self.vmap_processed = np.copy(vmap)
-        # # =========================================================================
+
 
         # print("[INFO] Beginning Obstacle Search....")
-        obs, obsU, ybounds, dbounds, windows, nObs = self.find_obstacles(vmap, dLims, xLims, ground_detected=ground_detected,verbose=self.debug)
+        obs, obsU, ybounds, dbounds, windows, nObs = self.find_obstacles(vmap, dLims, xLims, ground_detected=ground_detected,verbose=self.debug_obstacle_search)
 
         # =========================================================================
         if(timing):
