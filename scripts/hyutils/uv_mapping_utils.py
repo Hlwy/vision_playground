@@ -10,7 +10,7 @@ import cv2, time
 import numpy as np
 
 from matplotlib import pyplot as plt
-from seg_utils import *
+from img_utils import *
 
 
 def make_uv_overlay(_img, umap, vmap,border_width=2):

@@ -2,9 +2,9 @@ import numpy as np
 import os, sys, cv2, time, math
 from matplotlib import pyplot as plt
 
-sys.path.append(os.path.abspath(os.path.join('..', '')))
+# sys.path.append(os.path.abspath(os.path.join('..', '')))
 
-from utils.seg_utils import *
+from hyutils.img_utils import *
 
 class VBOATS:
     def __init__(self):
@@ -170,7 +170,7 @@ class VBOATS:
         else:
             print("[ERROR] find_contours --- Unsupported filtering method!")
 
-        return filtered_contours
+        return filtered_contours,contours
     def find_obstacles(self, vmap, dLims, xLims, search_thresholds = (3,30), ground_detected=True, verbose=False):
         """
         ============================================================================
@@ -498,10 +498,10 @@ class VBOATS:
 
         newStrip = np.concatenate(newStrips, axis=0)
         return newStrip
-    def test_filter_first_umap_strip(self,umap_strip,max_value,thresholds,ratio_thresh=0.25,base_thresh=35):
+    def test_filter_first_umap_strip(self,umap_strip,max_value,nSubStrips,ratio_thresh=0.25,base_thresh=35):
         try: umap_strip = cv2.cvtColor(umap_strip,cv2.COLOR_BGR2GRAY)
         except: print("[WARNING] test_filter_first_umap_strip() ------  Unnecessary Strip Color Conversion BGR -> Gray")
-        n = len(thresholds)
+        n = nSubStrips
         strip = np.copy(umap_strip)
         hs, ws = strip.shape[:2];             dh = hs / n
         dead_strip = strip[0:dh, :]
@@ -528,9 +528,11 @@ class VBOATS:
 
         # _,pc1 = cv2.threshold(pc1, 200,255,cv2.THRESH_TOZERO)
         _,pc1 = cv2.threshold(pc1, 256,255,cv2.THRESH_TOZERO)
-        _,pc2 = cv2.threshold(pc2, 128,255,cv2.THRESH_TOZERO)
+        _,pc2 = cv2.threshold(pc2, 175,255,cv2.THRESH_TOZERO)
 
-        tmpdead = np.concatenate((pc1,pc2), axis=0);
+        # print("[DEBUG] test_filter_first_umap_strip() -----  Shapes: pc1 [%s], pc2 [%s]" % (str(pc1.shape),str(pc2.shape)))
+
+        tmpdead = np.concatenate((pc1,pc2), axis=0)
 
         tmpdead = cv2.morphologyEx(tmpdead, cv2.MORPH_CLOSE, kernel)
         tmprest = cv2.morphologyEx(tmprest, cv2.MORPH_CLOSE, kernel2)
@@ -692,12 +694,12 @@ class VBOATS:
         self.umap_processed = np.copy(umap)
 
         # ==========================================================================
-        fCnts1 = self.find_contours(stripU1, 55.0, offset=(0,0))
-        fCnts2 = self.find_contours(stripU2, 100.0, offset=(0,hUs))
-        fCnts3 = self.find_contours(stripU3, 80.0, offset=(0,hUs*2))
-        fCnts4 = self.find_contours(stripU4, 40.0, offset=(0,hUs*3))
-        fCnts5 = self.find_contours(stripU5, 40.0, offset=(0,hUs*4))
-        fCnts6 = self.find_contours(stripU6, 40.0, offset=(0,hUs*5))
+        fCnts1,_ = self.find_contours(stripU1, 55.0, offset=(0,0))
+        fCnts2,_ = self.find_contours(stripU2, 100.0, offset=(0,hUs))
+        fCnts3,_ = self.find_contours(stripU3, 80.0, offset=(0,hUs*2))
+        fCnts4,_ = self.find_contours(stripU4, 40.0, offset=(0,hUs*3))
+        fCnts5,_ = self.find_contours(stripU5, 40.0, offset=(0,hUs*4))
+        fCnts6,_ = self.find_contours(stripU6, 40.0, offset=(0,hUs*5))
         contours = fCnts1 + fCnts2 + fCnts3 + fCnts4 + fCnts5 + fCnts6
         xLims, dLims, _ = self.extract_contour_bounds(contours)
 
@@ -768,10 +770,14 @@ class VBOATS:
         threshsV = [threshV1, threshV2, 40,60,60]
         threshsCnt = [15.0,100.0,80.0,80.0,40.0,40.0]
 
+
         if(timing): t0 = time.time()
         # =========================================================================
 
         img = self.read_image(_img)
+
+        nThreshsU = int(math.ceil((self.dmax/256.0) * len(threshsU)))
+        nThreshsV = int(math.ceil((self.dmax/256.0) * len(threshsV)))
 
         kernelI = cv2.getStructuringElement(cv2.MORPH_RECT,(2,2))
         img = cv2.morphologyEx(img, cv2.MORPH_CLOSE, kernelI)
@@ -801,7 +807,7 @@ class VBOATS:
         ground_detected, mask, maskInv,mPxls, ground_wins,_ = self.get_vmap_mask(raw_vmap, maxStep = self.testMaxGndStep, window_size=[15,15])
 
         stripsPv = []
-        stripsV = strip_image(raw_vmap, nstrips=len(threshsV), horizontal_strips=False)
+        stripsV = strip_image(raw_vmap, nstrips=nThreshsV, horizontal_strips=False)
         self.stripsV_raw = list(stripsV)
         # print("[INFO] raw_vmap shape: %s" % (str(raw_vmap.shape)))
 
@@ -877,7 +883,7 @@ class VBOATS:
         #							U-MAP Specific Functions
         # ==========================================================================
 
-        stripsU = strip_image(raw_umap, nstrips=len(threshsU))
+        stripsU = strip_image(raw_umap, nstrips=nThreshsU)
         self.stripsU_raw = list(stripsU)
 
         stripsPu = []
@@ -889,7 +895,8 @@ class VBOATS:
                 # stripThreshs = [0.15, 0.15, 0.075, 0.065,0.025,0.025]
                 stripThreshs = [0.15, 0.25, 0.075, 0.065,0.05,0.025]
                 # tmpStrip = self.filter_first_umap_strip(strip,maxdisparity,stripThreshs)
-                _,_,_,tmpStrip,_ = self.test_filter_first_umap_strip(strip,maxdisparity,stripThreshs, ratio_thresh=self.testRestThreshRatio)
+                nSubStrips = int(math.ceil((self.dmax/256.0) * len(stripThreshs)))
+                _,_,_,tmpStrip,_ = self.test_filter_first_umap_strip(strip,maxdisparity,nSubStrips, ratio_thresh=self.testRestThreshRatio)
             else:
                 tmpMax = np.max(strip)
                 tmpThresh = threshsU[i] * tmpMax
@@ -903,7 +910,7 @@ class VBOATS:
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT,ksz1)
         stripsPu[0] = cv2.morphologyEx(stripsPu[0], cv2.MORPH_CLOSE, kernel0)
         stripsPu[1] = cv2.morphologyEx(stripsPu[1], cv2.MORPH_CLOSE, kernel)
-        stripsPu[2] = cv2.morphologyEx(stripsPu[2], cv2.MORPH_OPEN, kernel)
+        if len(stripsPu)>=3: stripsPu[2] = cv2.morphologyEx(stripsPu[2], cv2.MORPH_OPEN, kernel)
 
         hUs,w = stripsPu[0].shape[:2]
 
@@ -917,7 +924,7 @@ class VBOATS:
 
         # contours = []
         # for i, strip in enumerate(stripsPu):
-        #     contours += self.find_contours(strip, threshsCnt[i], offset=(0,hUs*i),debug=self.debug)
+        #     contours,_ += self.find_contours(strip, threshsCnt[i], offset=(0,hUs*i),debug=self.debug)
         if ground_detected:
             contour_thresh = self.testHighCntThresh
             if(self.debug): print("[INFO] pipelineTest ---- Ground Detected -> filtering contours w/ [%.2f] threshhold" % (contour_thresh))
@@ -925,7 +932,7 @@ class VBOATS:
             contour_thresh = self.testLowCntThresh
             if(self.debug): print("[INFO] pipelineTest ---- Ground Not Detected -> filtering contours w/ [%.2f] threshhold" % (contour_thresh))
 
-        contours = self.find_contours(umap, contour_thresh,debug=self.debug)
+        contours,_ = self.find_contours(umap, contour_thresh,debug=self.debug)
 
         self.contours = contours
         xLims, dLims, _ = self.extract_contour_bounds(contours)
