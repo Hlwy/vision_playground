@@ -533,8 +533,9 @@ class VBOATS:
         # print("[DEBUG] test_filter_first_umap_strip() -----  Shapes: pc1 [%s], pc2 [%s]" % (str(pc1.shape),str(pc2.shape)))
 
         tmpdead = np.concatenate((pc1,pc2), axis=0)
-
         tmpdead = cv2.morphologyEx(tmpdead, cv2.MORPH_CLOSE, kernel)
+
+        _,tmprest = cv2.threshold(tmprest, 55,255,cv2.THRESH_TOZERO)
         tmprest = cv2.morphologyEx(tmprest, cv2.MORPH_CLOSE, kernel2)
 
         dead_strip = np.concatenate((tmpdead,tmprest), axis=0);
@@ -845,14 +846,16 @@ class VBOATS:
         # print("[INFO] stripsPv[0] shape: %s" % (str(stripsPv[0].shape)))
 
         # stripsPv[1][stripsPv[1] < np.max(stripsPv[1]*0.9)] = 0
-        tmpMax = np.max(stripsPv[1])
-        tH = stripsPv[1].shape[0]
-        top_strip = stripsPv[1][0:tH/3, :]
-        bot_strip = stripsPv[1][tH/3:tH, :]
+        try:
+            tmpMax = np.max(stripsPv[1])
+            tH = stripsPv[1].shape[0]
+            top_strip = stripsPv[1][0:tH/3, :]
+            bot_strip = stripsPv[1][tH/3:tH, :]
 
-        top_strip[top_strip < tmpMax*vsThs[1,0]] = 0
-        bot_strip[bot_strip < tmpMax*vsThs[1,1]] = 0
-        stripsPv[1] = np.concatenate((top_strip,bot_strip), axis=0)
+            top_strip[top_strip < tmpMax*vsThs[1,0]] = 0
+            bot_strip[bot_strip < tmpMax*vsThs[1,1]] = 0
+            stripsPv[1] = np.concatenate((top_strip,bot_strip), axis=0)
+        except: pass
 
         self.stripsV_processed = list(stripsPv)
         newV = np.concatenate(stripsPv, axis=1)
