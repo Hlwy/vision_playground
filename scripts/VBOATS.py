@@ -71,6 +71,7 @@ class VBOATS:
         self.flag_simulation = False
         self.flag_morphs = True
         self.debug = False
+        self.debug_contours = False
         self.debug_windows = False
         self.debug_obstacle_search = False
     def get_uv_map(self, img, verbose=False, timing=False):
@@ -591,14 +592,6 @@ class VBOATS:
         ksize = (5,1)
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT,ksize)
         pStrip = cv2.morphologyEx(newStrip, cv2.MORPH_CLOSE, kernel)
-
-        # if self.is_ground_present: cnt_thresh = self.testHighCntThresh
-        # else: cnt_thresh = self.testLowCntThresh
-
-        # contours = self.find_contours(pStrip, cnt_thresh)
-        # disp = cv2.applyColorMap(pStrip,cv2.COLORMAP_PARULA)
-        # disp = cv2.cvtColor(disp,cv2.COLOR_BGR2RGB)
-        # [cv2.drawContours(disp, [cnt], 0, (255,0,0), 1) for cnt in contours]
         disp = []
 
         try: newStrip = cv2.cvtColor(newStrip,cv2.COLOR_GRAY2BGR)
@@ -607,6 +600,106 @@ class VBOATS:
         except: print("[WARNING] test_filter_first_umap_strip() ------  Unnecessary Strip Color Conversion Gray -> BGR for \'pStrip\'")
 
         return newStrip, strip, nStrip,pStrip, disp
+
+
+    def test_filter_first_umap_strip2(self,umap_strip,max_value,nSubStrips):
+        try: umap_strip = cv2.cvtColor(umap_strip,cv2.COLOR_BGR2GRAY)
+        except: print("[WARNING] test_filter_first_umap_strip() ------  Unnecessary Strip Color Conversion BGR -> Gray")
+        n = nSubStrips
+        strip = np.copy(umap_strip)
+        hs, ws = strip.shape[:2];             dh = hs / n
+
+        deadzone = strip[0:dh, :];           oDead = np.copy(deadzone)
+        rest_strip = strip[dh:hs, :];        oRest = np.copy(rest_strip)
+        hd, wd = deadzone.shape[:2];         hr, wr = rest_strip.shape[:2]
+
+        # ==========================================================================
+        dzDeadStrip = deadzone[0:3, :]
+        dzRest = deadzone[3:hd, :]
+
+        subDeadZone = dzDeadStrip[0:1, :]
+        subRestZone = dzDeadStrip[1:dzDeadStrip.shape[0], :]
+
+        dzRestMax = np.max(dzRest);                 dzRestMean = np.mean(dzRest)
+        mainDeadzoneMax = np.max(dzDeadStrip);      subRestZoneMax = np.max(subRestZone)
+        mainDeadzoneMean = np.mean(dzDeadStrip);    subRestZoneMean = np.mean(subRestZone)
+
+        ratioMainDead = mainDeadzoneMean/float(mainDeadzoneMax)
+        ratioSubRest = subRestZoneMean/float(subRestZoneMax)
+        tmpRatio = ratioSubRest + ratioMainDead*ratioSubRest
+
+        thrSubDead = int((1-ratioMainDead)*mainDeadzoneMax)
+        tmpThresh = int(tmpRatio*mainDeadzoneMax)
+
+        _,subDeadZoneFiltered = cv2.threshold(subDeadZone, thrSubDead,255,cv2.THRESH_TOZERO)
+        _,subRestZoneFiltered = cv2.threshold(subRestZone, tmpThresh,255,cv2.THRESH_TOZERO)
+
+        subDzFiltered = np.concatenate((subDeadZoneFiltered,subRestZoneFiltered), axis=0);
+        subDz = np.copy(subDzFiltered)
+
+        subDzFilteredMax = np.max(subDzFiltered)
+        subDzFilteredMean = np.mean(subDzFiltered)
+        gain = dzRestMax/float(subDzFilteredMax)
+
+        ratioDzRest = dzRestMean/float(dzRestMax)
+        ratioSubDzFiltered = subDzFilteredMean/float(subDzFilteredMax)
+        tmpRatio = ratioDzRest + gain
+
+        dzRestThresh = int((1-ratioDzRest)*dzRestMax)
+        subThresh1 = int(tmpRatio*dzRestThresh)
+        subThresh2 = int(tmpRatio*dzRestMax)
+        combinedThresh = subThresh1 + subThresh2
+        if not self.is_ground_present or 100 < combinedThresh < 255: tmpThresh = subThresh2
+        elif combinedThresh >= 255: tmpThresh = int(0.5*255)
+        else: tmpThresh = combinedThresh
+
+        altMainThresh = int(math.ceil(ratioSubDzFiltered*subDzFilteredMax))
+
+        _,tmpDzRest = cv2.threshold(dzRest, tmpThresh,255,cv2.THRESH_TOZERO)
+
+        subDzKernel = cv2.getStructuringElement(cv2.MORPH_RECT,(30,1))
+        subRestKernel = cv2.getStructuringElement(cv2.MORPH_RECT,(20,1))
+
+        subDz = cv2.morphologyEx(subDz, cv2.MORPH_CLOSE, subDzKernel)
+        subRest = cv2.morphologyEx(tmpDzRest, cv2.MORPH_CLOSE, subRestKernel)
+        deadzone = np.concatenate((subDz,subRest), axis=0)
+
+        tmpStrip = np.concatenate((deadzone,rest_strip), axis=0)
+        tmpStripCopy = np.copy(tmpStrip)
+
+        clahe = cv2.createCLAHE(clipLimit=10.0,tileGridSize=(hs,ws/4))
+        stripCLAHE = clahe.apply(tmpStrip)
+
+        tmpStripMax = np.max(tmpStrip);   tmpStripMean = np.mean(tmpStrip)
+        claheMax = np.max(stripCLAHE);    claheMean = np.mean(stripCLAHE)
+        meanGain = (claheMean - tmpStripMean)/float(tmpStripMean)
+
+        ratioClahe = claheMean/float(claheMax)
+        ratioTmpStrip = tmpStripMean/float(tmpStripMax)
+
+        tmpRatio = ratioTmpStrip*meanGain
+        tmpRatio1 = ratioClahe + tmpRatio
+
+        claheThresh = int(ratioClahe*claheMax)
+        subThresh = int(tmpRatio1*claheMax)
+        tmpThresh = int(subThresh + tmpRatio1*claheThresh + math.ceil(ratioTmpStrip*claheMax))
+
+        _,claheMask = cv2.threshold(stripCLAHE, tmpThresh,255,cv2.THRESH_BINARY)
+
+        claheMaskKernel = cv2.getStructuringElement(cv2.MORPH_RECT,(40,3))
+        claheMask = cv2.morphologyEx(claheMask, cv2.MORPH_CLOSE, claheMaskKernel)
+
+        resStrip = cv2.bitwise_and(tmpStripCopy,tmpStripCopy,mask=claheMask)
+        resultant = resStrip[deadzone.shape[0]:resStrip.shape[0],:]
+
+        mainStrip = np.concatenate((deadzone,resultant), axis=0)
+        _,newStrip = cv2.threshold(mainStrip, altMainThresh,255,cv2.THRESH_TOZERO)
+
+        try: newStrip = cv2.cvtColor(newStrip,cv2.COLOR_GRAY2BGR)
+        except: print("[WARNING] test_filter_first_umap_strip() ------  Unnecessary Strip Color Conversion Gray -> BGR for \'newStrip\'")
+
+        return newStrip, strip
+
 
     def pipeline(self, _img, threshU1=7, threshU2=20,threshV2=70, timing=False):
         """
@@ -898,7 +991,8 @@ class VBOATS:
                 stripThreshs = [0.15, 0.25, 0.075, 0.065,0.05,0.025]
                 # tmpStrip = self.filter_first_umap_strip(strip,maxdisparity,stripThreshs)
                 nSubStrips = int(math.ceil((self.dmax/256.0) * len(stripThreshs)))
-                _,_,_,tmpStrip,_ = self.test_filter_first_umap_strip(strip,maxdisparity,nSubStrips, ratio_thresh=self.testRestThreshRatio)
+                # _,_,_,tmpStrip,_ = self.test_filter_first_umap_strip(strip,maxdisparity,nSubStrips, ratio_thresh=self.testRestThreshRatio)
+                tmpStrip,_ = self.test_filter_first_umap_strip2(strip,maxdisparity,nSubStrips)
             else:
                 tmpMax = np.max(strip)
                 tmpThresh = threshsU[i] * tmpMax
@@ -934,7 +1028,7 @@ class VBOATS:
             contour_thresh = self.testLowCntThresh
             if(self.debug): print("[INFO] pipelineTest ---- Ground Not Detected -> filtering contours w/ [%.2f] threshhold" % (contour_thresh))
 
-        contours,_ = self.find_contours(umap, contour_thresh,debug=self.debug)
+        contours,_ = self.find_contours(umap, contour_thresh,debug=self.debug_contours)
 
         self.contours = contours
         xLims, dLims, _ = self.extract_contour_bounds(contours)
