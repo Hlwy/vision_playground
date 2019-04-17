@@ -59,10 +59,17 @@ def plot_image(img,figNum=None):
     plt.subplots_adjust(wspace=0.0,hspace=0.0,left=0.0,right=1.0,top=1.0, bottom=0.0)
     plt.show()
 
-def pplot(img,num = 0):
+def pplot(img,num = 0,flag_resize=False,scale=(2,1)):
     plt.figure(num)
-    plt.imshow(img)
     plt.subplots_adjust(wspace=0.0,hspace=0.0,left=0.0,right=1.0,top=1.0, bottom=0.0)
+    sz = img.shape
+    if flag_resize:
+        sz2 = (sz[1]*scale[1], sz[0]*scale[0])
+        if len(sz) == 3: sz2 = sz2 + (3,)
+        print(sz2)
+        rsize = cv2.resize(img,sz2[:2])
+    else: rsize = img
+    plt.imshow(rsize,interpolation='bilinear')
     plt.show()
 
 def pplots(imgs,title="Temp",size=(6,1),flag_resize=False,scale=(2,1)):
@@ -78,7 +85,7 @@ def pplots(imgs,title="Temp",size=(6,1),flag_resize=False,scale=(2,1)):
         if flag_resize:
             sz2 = (sz[1]*scale[1], sz[0]*scale[0])
             if len(sz) == 3: sz2 = sz2 + (3,)
-            rsize = cv2.resize(img,sz2)
+            rsize = cv2.resize(img,sz2[:2])
         else: rsize = img
         ax1.imshow(rsize,interpolation='bilinear')
 #         ax1.imshow(rsize,interpolation='nearest')

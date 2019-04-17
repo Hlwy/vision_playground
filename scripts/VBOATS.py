@@ -5,6 +5,7 @@ from matplotlib import pyplot as plt
 # sys.path.append(os.path.abspath(os.path.join('..', '')))
 
 from hyutils.img_utils import *
+from hyutils.debug_utils import *
 
 class VBOATS:
     def __init__(self):
@@ -234,11 +235,13 @@ class VBOATS:
         if(window_size is None):
             dWy = self.vmap_search_window_height
             dWx = abs(xk - xmin)
-            if(dWx <= 1): dWx = 2
+            if(dWx <= 1):
+                if xk <= 3: dWx = 1
+                else:  dWx = 2
         else: dWx, dWy = np.int32(window_size)/2
 
         if(yk <= 0): yk = 0 + dWy
-        if(verbose): print("Starting Location: (%d, %d)" % (xk, yk) )
+        if(verbose): print("Object Search Window [%d x %d] -- Starting Location (%d, %d)" % (dWx,dWy,xk, yk) )
 
         if(timing): t0 = time.time()
 
@@ -632,7 +635,14 @@ class VBOATS:
         tmpThresh = int(tmpRatio*mainDeadzoneMax)
 
         _,subDeadZoneFiltered = cv2.threshold(subDeadZone, thrSubDead,255,cv2.THRESH_TOZERO)
-        _,subRestZoneFiltered = cv2.threshold(subRestZone, tmpThresh,255,cv2.THRESH_TOZERO)
+
+        subRestZone1 = dzDeadStrip[1:2, :]
+        subRestZone2 = dzDeadStrip[2:dzDeadStrip.shape[0], :]
+
+        _,subRestZoneFiltered1 = cv2.threshold(subRestZone1, tmpThresh+10,255,cv2.THRESH_TOZERO)
+        _,subRestZoneFiltered2 = cv2.threshold(subRestZone2, tmpThresh,255,cv2.THRESH_TOZERO)
+        subRestZoneFiltered = np.concatenate((subRestZoneFiltered1,subRestZoneFiltered2), axis=0)
+
 
         subDzFiltered = np.concatenate((subDeadZoneFiltered,subRestZoneFiltered), axis=0);
         subDz = np.copy(subDzFiltered)
@@ -654,6 +664,7 @@ class VBOATS:
         else: tmpThresh = combinedThresh
 
         altMainThresh = int(math.ceil(ratioSubDzFiltered*subDzFilteredMax))
+        # if altMainThresh <= 2: altMainThresh = 7
 
         _,tmpDzRest = cv2.threshold(dzRest, tmpThresh,255,cv2.THRESH_TOZERO)
 
@@ -700,6 +711,67 @@ class VBOATS:
 
         return newStrip, strip
 
+    def second_umap_strip_filter(self, umap_strip, verbose=True):
+        try: umap_strip = cv2.cvtColor(umap_strip,cv2.COLOR_BGR2GRAY)
+        except: print("[WARNING] second_umap_strip_filter() ------  Unnecessary Strip Color Conversion BGR -> Gray")
+        strip = np.copy(umap_strip)
+        hs, ws = strip.shape[:2]
+        # print("second_umap_strip_filter() --- Input Strip Shape: %s" % str(strip.shape[:2]))
+
+        clahe = cv2.createCLAHE(clipLimit=10.0,tileGridSize=(hs,ws/4))
+        claheStrip = clahe.apply(strip)
+
+        mx0 = np.max(claheStrip);     mn0 = np.mean(claheStrip)
+        mx1 = np.max(strip);   mn1 = np.mean(strip)
+        maxGain = (mx1)/float(mx0)
+        meanGain = (mn0 - mn1)/float(mn1)
+
+        tmpRatio0 = mn0/float(mx0)
+        tmpRatio1 = mn1/float(mx1)
+        tmpRatio2 = tmpRatio0 + maxGain
+        tmpRatio3 = tmpRatio1 + tmpRatio1*tmpRatio2
+
+        tmpTH1 = int(tmpRatio2*mx0)
+        tmpTH2 = int(math.ceil(tmpRatio3*mx1))
+        testThresh = tmpTH1
+        if tmpTH2 <= 1: restThresh = 3
+        else: restThresh = tmpTH2
+
+        if verbose:
+            print("Means:\t\t%.2f, %.2f"% (mn0,mn1))
+            print("Maxs:\t\t%d, %d"% (mx0,mx1))
+            print("Mean Gain:\t%.3f" % meanGain)
+            print("Max Gain:\t%.3f" % maxGain)
+            plist("Tmp Ratios:\t",[tmpRatio0,tmpRatio1,tmpRatio2],dplace=3)
+            plist("Tmp Threhsolds: ",[tmpTH1,tmpTH2])
+            print("testThresh: %d" % testThresh)
+            print("RestThresh: %d" % restThresh)
+
+        _,strMask = cv2.threshold(claheStrip, testThresh,255,cv2.THRESH_BINARY)
+
+        ks = (20,2)
+        kernelM = cv2.getStructuringElement(cv2.MORPH_RECT,ks)
+        strMask = cv2.morphologyEx(strMask, cv2.MORPH_CLOSE, kernelM)
+
+        tmp = np.copy(strip)
+        tmpStrip = cv2.bitwise_and(tmp,tmp,mask=strMask)
+        newStrip = np.copy(tmpStrip)
+
+        _,newStrip = cv2.threshold(newStrip, restThresh,255,cv2.THRESH_TOZERO)
+        # print("second_umap_strip_filter() --- Output Strip Shape: %s" % str(newStrip.shape[:2]))
+
+        try: newStrip = cv2.cvtColor(newStrip,cv2.COLOR_GRAY2BGR)
+        except: print("[WARNING] second_umap_strip_filter() ------  Unnecessary Strip Color Conversion Gray -> BGR for \'newStrip\'")
+
+        # pStrip = np.copy(newStrip)
+        # Find Contours
+        # contours,_ = vboat.find_contours(pStrip, 45.0)
+        # disp = cv2.applyColorMap(pStrip,cv2.COLORMAP_PARULA);       disp = cv2.cvtColor(disp,cv2.COLOR_BGR2RGB)
+        # [cv2.drawContours(disp, [cnt], 0, (255,0,0), 1) for cnt in contours]
+        # print("Found %d Objects in 1st Strip" % len(contours))
+        # # pplots([stripD,stripR,copyCld,copyClr],"CLAHE Sections",(4,1))
+        # pplots([strip,newStrip,disp],"Test Compare",(3,1))
+        return newStrip
 
     def pipeline(self, _img, threshU1=7, threshU2=20,threshV2=70, timing=False):
         """
@@ -853,14 +925,14 @@ class VBOATS:
         self.windows_ground = ground_wins
         return 0
 
-    def pipelineTest(self, _img, threshU1=0.25, threshU2=0.25, threshV1=5, threshV2=70, timing=False):
+    def pipelineTest(self, _img, threshU1=0.25, threshU2=0.3, threshV1=5, threshV2=70, timing=False):
         """
         ============================================================================
                                 Entire Test pipeline
         ============================================================================
         """
         dt = 0
-        threshsU = [threshU1, threshU2, 0.3, 0.5,0.5,0.5]
+        threshsU = [threshU1, threshU2, 0.3, 0.7,0.5,0.5]
         threshsV = [threshV1, threshV2, 40,60,60]
         threshsCnt = [15.0,100.0,80.0,80.0,40.0,40.0]
 
@@ -993,12 +1065,17 @@ class VBOATS:
                 nSubStrips = int(math.ceil((self.dmax/256.0) * len(stripThreshs)))
                 # _,_,_,tmpStrip,_ = self.test_filter_first_umap_strip(strip,maxdisparity,nSubStrips, ratio_thresh=self.testRestThreshRatio)
                 tmpStrip,_ = self.test_filter_first_umap_strip2(strip,maxdisparity,nSubStrips)
+                # print("tmpStrip Shape: %s" % str(tmpStrip.shape))
+            elif i == 1:
+                tmpStrip = self.second_umap_strip_filter(strip)
+                # print("tmpStrip Shape: %s" % str(tmpStrip.shape))
             else:
                 tmpMax = np.max(strip)
                 tmpThresh = threshsU[i] * tmpMax
                 # if(self.debug): print("Umap Strip [%d] Max, Thresholded: %d, %d" % (i,tmpMax,tmpThresh))
                 _, tmpStrip = cv2.threshold(strip, tmpThresh, 255,cv2.THRESH_TOZERO)
                 # _, tmpStrip = cv2.threshold(strip, threshsU[i], 255,cv2.THRESH_BINARY)
+                # print("tmpStrip Shape: %s" % str(tmpStrip.shape))
             stripsPu.append(tmpStrip)
 
         ksz1 = self.kszs[0]
