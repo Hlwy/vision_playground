@@ -72,13 +72,13 @@ def pplot(img,num = 0,flag_resize=False,scale=(2,1)):
     plt.imshow(rsize,interpolation='bilinear')
     plt.show()
 
-def pplots(imgs,title="Temp",size=(6,1),flag_resize=False,scale=(2,1)):
-    size[0]
+def pplots(imgs,title="Temp",size=(6,1),flag_resize=False,scale=(2,1),debug=False):
     plt.figure(title,figsize = size)
     gs1 = gridspec.GridSpec(size[0], size[1])
     gs1.update(wspace=0.0, hspace=0.0,left=0.0,right=1.0,top=1.0, bottom=0.0)
 
     for i, img in enumerate(imgs):
+        if(debug): print("i: %d"%i)
         ax1 = plt.subplot(gs1[i])
         plt.axis('on')
         sz = img.shape

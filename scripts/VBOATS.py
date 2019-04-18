@@ -47,7 +47,7 @@ class VBOATS:
         self.window_size = [10,30]
         self.vmap_search_window_height = 10
         self.mask_size = [20,40]
-        self.dead_x = 3
+        self.dead_x = 10
         self.dead_y = 3
         self.dH = 4
         self.dW = 5
@@ -403,7 +403,9 @@ class VBOATS:
                 dXmean = xmean - prev_xmean
 
                 yk = yk - 2*dWy
-                if dXmean < -3: xk = xk + dWx/2
+                if dXmean < 0:
+                    if dXmean < -3: xk = xk + abs(dXmean*2) + dWx/2
+                    else: xk = xmean + abs(dXmean) + dWx/2
                 else: xk = xmean + dWx/2
 
                 if dXmean > 3: xk += 5
@@ -603,8 +605,6 @@ class VBOATS:
         except: print("[WARNING] test_filter_first_umap_strip() ------  Unnecessary Strip Color Conversion Gray -> BGR for \'pStrip\'")
 
         return newStrip, strip, nStrip,pStrip, disp
-
-
     def test_filter_first_umap_strip2(self,umap_strip,max_value,nSubStrips):
         try: umap_strip = cv2.cvtColor(umap_strip,cv2.COLOR_BGR2GRAY)
         except: print("[WARNING] test_filter_first_umap_strip() ------  Unnecessary Strip Color Conversion BGR -> Gray")
@@ -649,7 +649,8 @@ class VBOATS:
 
         subDzFilteredMax = np.max(subDzFiltered)
         subDzFilteredMean = np.mean(subDzFiltered)
-        gain = dzRestMax/float(subDzFilteredMax)
+        if subDzFilteredMax == 0: gain = 0
+        else: gain = dzRestMax/float(subDzFilteredMax)
 
         ratioDzRest = dzRestMean/float(dzRestMax)
         ratioSubDzFiltered = subDzFilteredMean/float(subDzFilteredMax)
@@ -659,11 +660,14 @@ class VBOATS:
         subThresh1 = int(tmpRatio*dzRestThresh)
         subThresh2 = int(tmpRatio*dzRestMax)
         combinedThresh = subThresh1 + subThresh2
+
         if not self.is_ground_present or 100 < combinedThresh < 255: tmpThresh = subThresh2
         elif combinedThresh >= 255: tmpThresh = int(0.5*255)
         else: tmpThresh = combinedThresh
 
-        altMainThresh = int(math.ceil(ratioSubDzFiltered*subDzFilteredMax))
+        if subDzFilteredMax == 0: altMainThresh = 0
+        else: altMainThresh = int(math.ceil(ratioSubDzFiltered*subDzFilteredMax))
+
         # if altMainThresh <= 2: altMainThresh = 7
 
         _,tmpDzRest = cv2.threshold(dzRest, tmpThresh,255,cv2.THRESH_TOZERO)
@@ -763,14 +767,6 @@ class VBOATS:
         try: newStrip = cv2.cvtColor(newStrip,cv2.COLOR_GRAY2BGR)
         except: print("[WARNING] second_umap_strip_filter() ------  Unnecessary Strip Color Conversion Gray -> BGR for \'newStrip\'")
 
-        # pStrip = np.copy(newStrip)
-        # Find Contours
-        # contours,_ = vboat.find_contours(pStrip, 45.0)
-        # disp = cv2.applyColorMap(pStrip,cv2.COLORMAP_PARULA);       disp = cv2.cvtColor(disp,cv2.COLOR_BGR2RGB)
-        # [cv2.drawContours(disp, [cnt], 0, (255,0,0), 1) for cnt in contours]
-        # print("Found %d Objects in 1st Strip" % len(contours))
-        # # pplots([stripD,stripR,copyCld,copyClr],"CLAHE Sections",(4,1))
-        # pplots([strip,newStrip,disp],"Test Compare",(3,1))
         return newStrip
 
     def pipeline(self, _img, threshU1=7, threshU2=20,threshV2=70, timing=False):
@@ -1057,9 +1053,6 @@ class VBOATS:
         for i, strip in enumerate(stripsU):
             if i == 0:
                 maxdisparity = np.max(raw_umap)
-                # stripThreshs = [0.24, 0.15, 0.075, 0.065,0.025,0.025]
-                # stripThreshs = [0.2, 0.15, 0.075, 0.065,0.025,0.025]
-                # stripThreshs = [0.15, 0.15, 0.075, 0.065,0.025,0.025]
                 stripThreshs = [0.15, 0.25, 0.075, 0.065,0.05,0.025]
                 # tmpStrip = self.filter_first_umap_strip(strip,maxdisparity,stripThreshs)
                 nSubStrips = int(math.ceil((self.dmax/256.0) * len(stripThreshs)))
