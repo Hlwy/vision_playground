@@ -13,7 +13,7 @@ from matplotlib import pyplot as plt
 from img_utils import *
 
 
-def make_uv_overlay(_img, umap, vmap,border_width=2):
+def make_uv_overlay(_img, umap, vmap,border_width=2,color_uvmaps=True):
     img = np.copy(_img)
     try: img = cv2.cvtColor(img,cv2.COLOR_GRAY2BGR)
     except: pass
@@ -29,8 +29,12 @@ def make_uv_overlay(_img, umap, vmap,border_width=2):
 
     # numap = cv2.applyColorMap(umap,cv2.COLORMAP_JET)
     # nvmap = cv2.applyColorMap(vmap,cv2.COLORMAP_JET)
-    numap = cv2.applyColorMap(umap,cv2.COLORMAP_PARULA)
-    nvmap = cv2.applyColorMap(vmap,cv2.COLORMAP_PARULA)
+    if color_uvmaps:
+        numap = cv2.applyColorMap(umap,cv2.COLORMAP_PARULA)
+        nvmap = cv2.applyColorMap(vmap,cv2.COLORMAP_PARULA)
+    else:
+        numap = umap
+        nvmap = vmap
     # print(img.shape,borders.shape, nvmap.shape)
     # print(numap.shape,borders2.shape, blank.shape)
     pt1 = np.concatenate((img,borders, nvmap), axis=1)
