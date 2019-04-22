@@ -235,8 +235,8 @@ class VBOATS:
         if(window_size is None):
             dWy = self.vmap_search_window_height
             dWx = abs(xk - xmin)
-            if(dWx <= 1):
-                if xk <= 3: dWx = 1
+            if(dWx <= 2):
+                if xk <= 5: dWx = 1
                 else:  dWx = 2
         else: dWx, dWy = np.int32(window_size)/2
 
@@ -461,10 +461,9 @@ class VBOATS:
             ground_detected = True
         else:
             ground_detected = False
-        # ==========================================================================
-        cv2.rectangle(black,(0,0),(dx,h),(255,255,255), cv2.FILLED)
-
-        # ==========================================================================
+        # # ==========================================================================
+        # cv2.rectangle(black,(0,0),(dx,h),(255,255,255), cv2.FILLED)
+        # # ==========================================================================
         mask = cv2.cvtColor(black,cv2.COLOR_BGR2GRAY)
         mask_inv = cv2.bitwise_not(mask)
         if(timing):
@@ -811,7 +810,7 @@ class VBOATS:
 
         if relMaxRatio >= 1.0:
             if not self.is_ground_present: tmpTH5 = int(0.15*vstripMax)
-            else: tmpTH5 = int(0.35*vstripMax)
+            else: tmpTH5 = int(0.3*vstripMax)
 
         if verbose:
             print("----------- [Filter Step 1] -----------")
@@ -820,11 +819,14 @@ class VBOATS:
             plist("\tMeans:\t",mns)
             plist("\tRatios:\t",rats)
             plist("\tThresholds:\t",ths)
-            print("\tDeadzone Thresholds: %d, %d" % (tmpTH4,tmpTH5))
+            print("\tDeadzone Thresholds: %d, %d" % (tmpTH5,tmpTH3))
+            # print("\tDeadzone Thresholds: %d, %d" % (tmpTH4,tmpTH5))
             print()
 
-        _,testD = cv2.threshold(tmpdead, tmpTH4,255,cv2.THRESH_TOZERO)
-        _,testR = cv2.threshold(tmprest, tmpTH5,255,cv2.THRESH_TOZERO)
+        _,testD = cv2.threshold(tmpdead, tmpTH5,255,cv2.THRESH_TOZERO)
+        _,testR = cv2.threshold(tmprest, tmpTH3,255,cv2.THRESH_TOZERO)
+        # _,testD = cv2.threshold(tmpdead, tmpTH4,255,cv2.THRESH_TOZERO)
+        # _,testR = cv2.threshold(tmprest, tmpTH5,255,cv2.THRESH_TOZERO)
         dead_strip = np.concatenate((testD,testR), axis=1)
 
         #======================================================================
@@ -847,9 +849,10 @@ class VBOATS:
         tmpTH0 = int((1-tmpRatio0)*mx1)
         tmpTH1 = int(tmpRatio1*mx1)
         tmpTH2 = int(tmpRatio2*mx1)
-        ths = [tmpTH0,tmpTH1,tmpTH2]
+        tmpTH3 = int(tmpRatio0*mx1)
+        ths = [tmpTH0,tmpTH1,tmpTH2,tmpTH3]
 
-        _,restMask = cv2.threshold(claheRest, tmpTH2,255,cv2.THRESH_TOZERO)
+        _,restMask = cv2.threshold(claheRest, tmpTH3,255,cv2.THRESH_TOZERO)
         tmpRest = cv2.bitwise_and(rest_strip,rest_strip,mask=restMask)
         newVstrip0 = np.concatenate((dead_strip,tmpRest), axis=1)
 
@@ -1115,6 +1118,13 @@ class VBOATS:
         cv2.rectangle(raw_vmap,(raw_vmap.shape[1]-dead_x,0),(raw_vmap.shape[1],raw_vmap.shape[0]),(0,0,0), cv2.FILLED)
         # =========================================================================
         # if(self.flag_simulation): _, raw_umap = cv2.threshold(raw_umap, 35, 255,cv2.THRESH_TOZERO)
+        tmp1 = raw_vmap[:, 0:40]
+        tmp2 = raw_vmap[:, 40:raw_vmap.shape[0]]
+
+        _,tmp1 = cv2.threshold(tmp1, 5,255,cv2.THRESH_TOZERO)
+        _,tmp2 = cv2.threshold(tmp2, 7,255,cv2.THRESH_TOZERO)
+        raw_vmap = np.concatenate((tmp1,tmp2), axis=1)
+
         self.umap_deadzoned = np.copy(raw_umap)
         self.vmap_deadzoned = np.copy(raw_vmap)
         try:
@@ -1126,7 +1136,7 @@ class VBOATS:
         #							V-MAP Specific Functions
         # ==========================================================================
         ground_detected, mask, maskInv,mPxls, ground_wins,_ = self.get_vmap_mask(raw_vmap,
-            maxStep = 23, threshold=15,window_size=[15,10],shift_gain=0.65)
+            maxStep = 19, threshold=15,window_size=[18,10],min_ground_pixels = 8, shift_gain=0.65)
         # ground_detected, mask, maskInv,mPxls, ground_wins,_ = vboat.get_vmap_mask(vmap, maxStep = 16,
         #             window_size=[15,15], verbose=True)
         self.vmask = np.copy(mask)
@@ -1135,9 +1145,25 @@ class VBOATS:
         tmpV = cv2.cvtColor(raw_vmap, cv2.COLOR_BGR2GRAY)
         vmapIn = cv2.bitwise_and(tmpV,tmpV,mask=maskInv)
 
-
-
         _, newV = self.vmap_filter_tester(vmapIn)
+
+        if not ground_detected:
+            th,tw = newV.shape[:2]
+            dead_strip = newV[:, 0:30]
+            rest_strip = newV[:, 30:tw]
+            tmpMax = np.max(rest_strip)
+            tmpTH = int(tmpMax*0.8)
+
+            tdh = (th*2)/3
+            topHalf = rest_strip[0:tdh, :]
+            botHalf = rest_strip[tdh:th, :]
+
+            _,topHalf = cv2.threshold(topHalf, tmpTH,255,cv2.THRESH_TOZERO)
+            tmpRest = np.concatenate((topHalf,botHalf), axis=0)
+
+            testV = np.concatenate((dead_strip,tmpRest), axis=1)
+            newV = np.copy(testV)
+
 
         # stripsPv = []
         # stripsV = strip_image(raw_vmap, nstrips=nThreshsV, horizontal_strips=False)
@@ -1438,6 +1464,7 @@ class VBOATS:
                 z,ux,uy,uz = self.calculate_distance(umap,us,disparities,vs)
 
                 theta = math.acos((uz/z))
+                theta = np.nan_to_num(theta)
 
                 distances.append(z)
                 angles.append(theta)
@@ -1451,8 +1478,19 @@ class VBOATS:
         disp = np.copy(copy)
 
         Obs = self.obstacles;  Ds = self.dbounds
-        minDist = np.min(dists);         maxDist = np.max(dists)
-        minDs = np.min(Ds);              maxDs = np.max(Ds)
+        try:
+            minDist = np.min(dists)
+            maxDist = np.max(dists)
+        except:
+            minDist = 0
+            maxDist = 1
+        try:
+            minDs = np.min(Ds)
+            maxDs = np.max(Ds)
+        except:
+            minDs = 0
+            maxDs = 1
+
         if verbose:
             print("Distance Limits: %.3f, %.3f" % (minDist,maxDist))
             print("Disparity Limits: %.3f, %.3f" % (minDs,maxDs))
