@@ -62,7 +62,7 @@ class VBOATS:
         ]
         self.deadUThresh = 0.8
         self.testLowCntThresh = 35.0
-        self.testHighCntThresh = 50.0
+        self.testHighCntThresh = 45.0
         self.testRestThreshRatio = 0.25
         self.testMaxGndStep = 16
         self.is_ground_present = True
@@ -646,7 +646,6 @@ class VBOATS:
         _,subRestZoneFiltered2 = cv2.threshold(subRestZone2, tmpThresh,255,cv2.THRESH_TOZERO)
         subRestZoneFiltered = np.concatenate((subRestZoneFiltered1,subRestZoneFiltered2), axis=0)
 
-
         subDzFiltered = np.concatenate((subDeadZoneFiltered,subRestZoneFiltered), axis=0);
         subDz = np.copy(subDzFiltered)
 
@@ -713,6 +712,13 @@ class VBOATS:
         mainStrip = np.concatenate((deadzone,resultant), axis=0)
         _,newStrip = cv2.threshold(mainStrip, altMainThresh,255,cv2.THRESH_TOZERO)
 
+        topHalf = newStrip[0:1, :]
+        botHalf = newStrip[1:newStrip.shape[0], :]
+        kernelT = cv2.getStructuringElement(cv2.MORPH_RECT,(75,1))
+        topHalfM = cv2.morphologyEx(topHalf, cv2.MORPH_OPEN, kernelT)
+
+        newStrip = np.concatenate((topHalfM,botHalf), axis=0)
+
         try: newStrip = cv2.cvtColor(newStrip,cv2.COLOR_GRAY2BGR)
         except: print("[WARNING] test_filter_first_umap_strip() ------  Unnecessary Strip Color Conversion Gray -> BGR for \'newStrip\'")
 
@@ -771,7 +777,7 @@ class VBOATS:
         except: print("[WARNING] second_umap_strip_filter() ------  Unnecessary Strip Color Conversion Gray -> BGR for \'newStrip\'")
 
         return newStrip
-    def vmap_filter_tester(self, vmap, nStrips=5, verbose=False):
+    def vmap_filter_tester(self, vmap, nStrips=5, yCutoff=None, verbose=False):
 
         stripsV = strip_image(vmap, nstrips=nStrips,horizontal_strips=False)
         subStrips = strip_image(stripsV[0], nstrips=nStrips,horizontal_strips=False)
@@ -785,12 +791,28 @@ class VBOATS:
         dead_strip = strip[:, 0:dw];           oDead = np.copy(dead_strip)
         rest_strip = strip[:, dw:ws];          oRest = np.copy(rest_strip)
 
-        hd, wd = dead_strip.shape[:2];         hr, wr = rest_strip.shape[:2]
-        tmpdead = dead_strip[:, 0:3];          tmprest = dead_strip[:, 3:hd]
-        vmapMax = np.max(vmap);             vstripMax = np.max(strip)
+        hd, wd = dead_strip.shape[:2];          hr, wr = rest_strip.shape[:2]
+        tmpdead = dead_strip[:, 0:3];           tmprest = dead_strip[:, 3:hd]
+        vmapMax = np.max(vmap);                 vstripMax = np.max(strip)
 
-        mx0 = np.max(dead_strip);       mx1 = np.max(tmpdead);     mx2 = np.max(tmprest)
-        mn0 = np.mean(dead_strip);      mn1 = np.mean(tmpdead);     mn2 = np.mean(tmprest)
+        drh, drw = tmprest.shape[:2]
+
+        mx0 = np.max(dead_strip)
+        if tmpdead.shape[1] == 0:
+            mx1 = 1
+            mn1 = 0.5
+        else:
+            mx1 = np.max(tmpdead)
+            mn1 = np.mean(tmpdead)
+
+        if drw == 0:
+            mx2 = 1
+            mn2 = 0.5
+        else:
+            mx2 = np.max(tmprest)
+            mn2 = np.mean(tmprest)
+
+        mn0 = np.mean(dead_strip)
         mxs = [mx0,mx1,mx2]
         mns = [mn0,mn1,mn2]
 
@@ -808,9 +830,22 @@ class VBOATS:
         tmpTH5 = int(tmpRatio4*mx2)
         ths = [tmpTH0,tmpTH1,tmpTH2,tmpTH3,tmpTH4,tmpTH5]
 
+        topCut = 100
+        topHalf = tmpdead[0:topCut, :]
+        botHalf = tmpdead[topCut:tmpdead.shape[0], :]
+        _,ttHalf = cv2.threshold(topHalf, int(tmpTH5*0.8),255,cv2.THRESH_TOZERO)
+        tmpdead = np.concatenate((ttHalf,botHalf), axis=0)
+
         if relMaxRatio >= 1.0:
             if not self.is_ground_present: tmpTH5 = int(0.15*vstripMax)
             else: tmpTH5 = int(0.3*vstripMax)
+
+        if self.is_ground_present:
+            rHalf = tmpdead[:, 0:1]
+            lHalf = tmpdead[:, 1:tmpdead.shape[1]]
+            _,trHalf = cv2.threshold(rHalf, tmpTH4-20,255,cv2.THRESH_TOZERO)
+            tmpdead = np.concatenate((trHalf,lHalf), axis=1)
+
 
         if verbose:
             print("----------- [Filter Step 1] -----------")
@@ -827,7 +862,8 @@ class VBOATS:
         _,testR = cv2.threshold(tmprest, tmpTH3,255,cv2.THRESH_TOZERO)
         # _,testD = cv2.threshold(tmpdead, tmpTH4,255,cv2.THRESH_TOZERO)
         # _,testR = cv2.threshold(tmprest, tmpTH5,255,cv2.THRESH_TOZERO)
-        dead_strip = np.concatenate((testD,testR), axis=1)
+        if drw == 0: dead_strip = np.copy(testD)
+        else: dead_strip = np.concatenate((testD,testR), axis=1)
 
         #======================================================================
         #                      FILTER STEP #2
@@ -855,6 +891,22 @@ class VBOATS:
         _,restMask = cv2.threshold(claheRest, tmpTH3,255,cv2.THRESH_TOZERO)
         tmpRest = cv2.bitwise_and(rest_strip,rest_strip,mask=restMask)
         newVstrip0 = np.concatenate((dead_strip,tmpRest), axis=1)
+        tmpH,tmpW = newVstrip0.shape[:2]
+
+        rHalf = newVstrip0[:, 0:tmpW/2]
+        lHalf = newVstrip0[:, tmpW/2:tmpW]
+
+        if yCutoff is not None:
+            topHalf = lHalf[0:yCutoff, :]
+            botHalf = lHalf[yCutoff:tmpH, :]
+        else:
+            topHalf = lHalf[0:tmpH/2, :]
+            botHalf = lHalf[tmpH/2:tmpH, :]
+
+        _,topHalf = cv2.threshold(topHalf, tmpTH2+10,255,cv2.THRESH_TOZERO)
+        _,botHalf = cv2.threshold(botHalf, tmpTH2-10,255,cv2.THRESH_TOZERO)
+        tmpLStrip = np.concatenate((topHalf,botHalf), axis=0)
+        newVstrip0 = np.concatenate((rHalf,tmpLStrip), axis=1)
 
         newStrips.append(newVstrip0)
         if verbose:
@@ -903,6 +955,16 @@ class VBOATS:
         botHalf = tmpStrip[hs1/2:hs1, :]
 
         _,topHalf = cv2.threshold(topHalf, tmpTH5,255,cv2.THRESH_TOZERO)
+        tmpStrip = np.concatenate((topHalf,botHalf), axis=0)
+
+        if yCutoff is not None:
+            topHalf = tmpStrip[0:yCutoff, :]
+            botHalf = tmpStrip[yCutoff:hs1, :]
+        else:
+            topHalf = tmpStrip[0:hs1/2, :]
+            botHalf = tmpStrip[hs1/2:hs1, :]
+
+        _,topHalf = cv2.threshold(topHalf, tmpTH3+20,255,cv2.THRESH_TOZERO)
         tmpStrip = np.concatenate((topHalf,botHalf), axis=0)
 
         newVstrip1 = np.copy(tmpStrip)
@@ -1136,7 +1198,7 @@ class VBOATS:
         #							V-MAP Specific Functions
         # ==========================================================================
         ground_detected, mask, maskInv,mPxls, ground_wins,_ = self.get_vmap_mask(raw_vmap,
-            maxStep = 19, threshold=15,window_size=[18,10],min_ground_pixels = 8, shift_gain=0.65)
+            maxStep = 23, threshold=15,window_size=[18,10],min_ground_pixels = 8, shift_gain=0.65)
         # ground_detected, mask, maskInv,mPxls, ground_wins,_ = vboat.get_vmap_mask(vmap, maxStep = 16,
         #             window_size=[15,15], verbose=True)
         self.vmask = np.copy(mask)
@@ -1145,7 +1207,12 @@ class VBOATS:
         tmpV = cv2.cvtColor(raw_vmap, cv2.COLOR_BGR2GRAY)
         vmapIn = cv2.bitwise_and(tmpV,tmpV,mask=maskInv)
 
-        _, newV = self.vmap_filter_tester(vmapIn)
+        botY = int(np.min(mPxls[:,1]))
+        hist = np.sum(vmapIn[0:botY,:], axis=1)
+        hist = histogram_sliding_filter(hist)
+        cutoffY = np.argmin(hist[1:])+1
+        # print("Y Cutoff: %d" % cutoffY)
+        _, newV = self.vmap_filter_tester(vmapIn,yCutoff=cutoffY)
 
         if not ground_detected:
             th,tw = newV.shape[:2]
@@ -1164,60 +1231,6 @@ class VBOATS:
             testV = np.concatenate((dead_strip,tmpRest), axis=1)
             newV = np.copy(testV)
 
-
-        # stripsPv = []
-        # stripsV = strip_image(raw_vmap, nstrips=nThreshsV, horizontal_strips=False)
-        # self.stripsV_raw = list(stripsV)
-        # # print("[INFO] raw_vmap shape: %s" % (str(raw_vmap.shape)))
-        #
-        # for i, strip in enumerate(stripsV):
-        #     _, tmpStrip = cv2.threshold(strip, threshsV[i], 255, cv2.THRESH_TOZERO)
-        #     stripsPv.append(tmpStrip)
-        #
-        # vsThs = np.array([
-        #     [0.25, 0.0],
-        #     [0.5, 0.0]
-        # ])
-        #
-        # tmpMax = np.max(stripsPv[0])
-        # stripsPv[0][stripsPv[0] < np.max(stripsPv[0]*0.035)] = 0
-        #
-        # top_strip = stripsPv[0][0:100, :]
-        # bot_strip = stripsPv[0][100:stripsPv[0].shape[0], :]
-        #
-        # top_strip[top_strip < tmpMax*vsThs[0,0]] = 0
-        # bot_strip[bot_strip < tmpMax*vsThs[0,1]] = 0
-        # stripsPv[0] = np.concatenate((top_strip,bot_strip), axis=0)
-        #
-        # dH = self.dH;        dHplus = self.dHplus;      dths = self.dThs
-        # dw = self.dW;        vdTh = [dths[3], 0]
-        #
-        # dead_strip = stripsPv[0][:, 0:dw]
-        # rest_strip = stripsPv[0][:,dw:stripsPv[0].shape[1]]
-        #
-        # # print("[INFO] Shapes stripsPv[0], dead_strip, rest_strip: %s, %s, %s" % (str(stripsPv[0].shape), str(dead_strip.shape),str(rest_strip.shape)))
-        #
-        # dead_strip[dead_strip < tmpMax*vdTh[0]] = 0
-        # rest_strip[rest_strip < tmpMax*vdTh[1]] = 0
-        # stripsPv[0] = np.concatenate((dead_strip,rest_strip), axis=1)
-        #
-        # # print("[INFO] stripsPv[0] shape: %s" % (str(stripsPv[0].shape)))
-        #
-        # # stripsPv[1][stripsPv[1] < np.max(stripsPv[1]*0.9)] = 0
-        # try:
-        #     tmpMax = np.max(stripsPv[1])
-        #     tH = stripsPv[1].shape[0]
-        #     top_strip = stripsPv[1][0:tH/3, :]
-        #     bot_strip = stripsPv[1][tH/3:tH, :]
-        #
-        #     top_strip[top_strip < tmpMax*vsThs[1,0]] = 0
-        #     bot_strip[bot_strip < tmpMax*vsThs[1,1]] = 0
-        #     stripsPv[1] = np.concatenate((top_strip,bot_strip), axis=0)
-        # except: pass
-        #
-        # self.stripsV_processed = list(stripsPv)
-        # newV = np.concatenate(stripsPv, axis=1)
-        # # print("[INFO] newV shape: %s" % (str(newV.shape)))
 
         try: newV = cv2.cvtColor(newV, cv2.COLOR_BGR2GRAY)
         except: print("[WARNING] ------------  Unnecessary Umap Color Converting")
@@ -1263,10 +1276,10 @@ class VBOATS:
                 # print("tmpStrip Shape: %s" % str(tmpStrip.shape))
             stripsPu.append(tmpStrip)
 
+        # kernel0 = cv2.getStructuringElement(cv2.MORPH_RECT,(1,2))
+        # stripsPu[0] = cv2.morphologyEx(stripsPu[0], cv2.MORPH_CLOSE, kernel0)
         ksz1 = self.kszs[0]
-        kernel0 = cv2.getStructuringElement(cv2.MORPH_RECT,(1,2))
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT,ksz1)
-        stripsPu[0] = cv2.morphologyEx(stripsPu[0], cv2.MORPH_CLOSE, kernel0)
         stripsPu[1] = cv2.morphologyEx(stripsPu[1], cv2.MORPH_CLOSE, kernel)
         if len(stripsPu)>=3: stripsPu[2] = cv2.morphologyEx(stripsPu[2], cv2.MORPH_OPEN, kernel)
 
@@ -1302,7 +1315,6 @@ class VBOATS:
         # #							V-MAP Specific Functions
         # # ==========================================================================
 
-
         # print("[INFO] Beginning Obstacle Search....")
         obs, obsU, ybounds, dbounds, windows, nObs = self.find_obstacles(vmap, dLims, xLims, ground_detected=ground_detected,verbose=self.debug_obstacle_search)
 
@@ -1310,7 +1322,7 @@ class VBOATS:
         if(timing):
             t1 = time.time()
             dt = t1 - t0
-            print("\t[uv_pipeline] --- Took %f seconds to complete" % (dt))
+            print("\t[uv_pipeline] --- Took %f seconds (%.2f Hz) to complete" % (dt, 1/dt))
 
         self.nObs = nObs
         self.obstacles = obs
