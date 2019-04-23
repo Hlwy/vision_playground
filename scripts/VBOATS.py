@@ -116,8 +116,6 @@ class VBOATS:
             print("\t[INFO] get_uv_map() --- Took %f seconds (%.2f Hz) to complete" % (dt, 1/dt))
 
         return umap,vmap, dt
-
-
     def get_uv_map_test(self, img, verbose=False, timing=False):
         """ ===================================================================
         Create the UV Disparity Mappings from a given depth (disparity) image
@@ -954,19 +952,26 @@ class VBOATS:
         lHalf = newVstrip0[:, tmpW/2:tmpW]
 
         if yCutoff is not None:
-            topHalf = lHalf[0:yCutoff, :]
-            botHalf = lHalf[yCutoff:tmpH, :]
+            topLHalf = lHalf[0:yCutoff, :]
+            botLHalf = lHalf[yCutoff:tmpH, :]
         else:
-            topHalf = lHalf[0:tmpH/2, :]
-            botHalf = lHalf[tmpH/2:tmpH, :]
+            topLHalf = lHalf[0:tmpH/2, :]
+            botLHalf = lHalf[tmpH/2:tmpH, :]
+
+        topRHalf = rHalf[0:100, :]
+        botRHalf = rHalf[100:tmpH, :]
 
         if self.is_ground_present: step2Thresh = tmpTH2
         else: step2Thresh = tmpTH2/2
 
-        _,topHalf = cv2.threshold(topHalf, step2Thresh+10,255,cv2.THRESH_TOZERO)
-        _,botHalf = cv2.threshold(botHalf, step2Thresh-10,255,cv2.THRESH_TOZERO)
-        tmpLStrip = np.concatenate((topHalf,botHalf), axis=0)
-        newVstrip0 = np.concatenate((rHalf,tmpLStrip), axis=1)
+        print("[INFO] vmap_filter() --- step2Thresh: %d" % step2Thresh)
+
+        _,topRHalf = cv2.threshold(topRHalf, step2Thresh+10,255,cv2.THRESH_TOZERO)
+        _,topLHalf = cv2.threshold(topLHalf, step2Thresh+10,255,cv2.THRESH_TOZERO)
+        _,botLHalf = cv2.threshold(botLHalf, step2Thresh-10,255,cv2.THRESH_TOZERO)
+        tmpLStrip = np.concatenate((topLHalf,botLHalf), axis=0)
+        tmpRStrip = np.concatenate((topRHalf,botRHalf), axis=0)
+        newVstrip0 = np.concatenate((tmpRStrip,tmpLStrip), axis=1)
 
         newStrips.append(newVstrip0)
         if verbose:
@@ -1069,9 +1074,12 @@ class VBOATS:
 
         # =========================================================================
         img = self.read_image(_img)
-        # print("[INFO] Image Read")
+
         kernelI = cv2.getStructuringElement(cv2.MORPH_RECT,(2,2))
         img = cv2.morphologyEx(img, cv2.MORPH_CLOSE, kernelI)
+
+        # _, tmpImg = cv2.threshold(img,0,255,cv2.THRESH_BINARY_INV)
+        # img = cv2.addWeighted(img,1.0,tmpImg,1.0,0.0)
 
         h, w = img.shape[:2]
         dead_x = self.dead_x; dead_y = self.dead_y
@@ -1082,15 +1090,20 @@ class VBOATS:
         # raw_umap, raw_vmap, dt = self.get_uv_map_test(img,timing=debug_timing)
         self.umap_raw = np.copy(raw_umap)
         self.vmap_raw = np.copy(raw_vmap)
+
         # =========================================================================
         cv2.rectangle(raw_umap,(0,raw_umap.shape[0]-dead_y),(raw_umap.shape[1],raw_umap.shape[0]),(0,0,0), cv2.FILLED)
         cv2.rectangle(raw_vmap,(raw_vmap.shape[1]-dead_x,0),(raw_vmap.shape[1],raw_vmap.shape[0]),(0,0,0), cv2.FILLED)
+
         tmp1 = raw_vmap[:, 0:40]
         tmp2 = raw_vmap[:, 40:raw_vmap.shape[0]]
 
         _,tmp1 = cv2.threshold(tmp1, 5,255,cv2.THRESH_TOZERO)
         _,tmp2 = cv2.threshold(tmp2, 7,255,cv2.THRESH_TOZERO)
         raw_vmap = np.concatenate((tmp1,tmp2), axis=1)
+
+        try: raw_vmap = cv2.cvtColor(raw_vmap,cv2.COLOR_GRAY2BGR)
+        except: print("[WARNING] ------------  Unnecessary Color Conversion, post Deadzoning"); pass
 
         # ==========================================================================
         #							V-MAP Specific Functions
@@ -1101,8 +1114,8 @@ class VBOATS:
 
         self.is_ground_present = ground_detected
 
-        # tmpV = cv2.cvtColor(raw_vmap, cv2.COLOR_BGR2GRAY)
-        tmpV = raw_vmap
+        # tmpV = raw_vmap
+        tmpV = cv2.cvtColor(raw_vmap, cv2.COLOR_BGR2GRAY)
         vmapIn = cv2.bitwise_and(tmpV,tmpV,mask=maskInv)
 
         botY = int(np.min(mPxls[:,1]))
@@ -1111,7 +1124,9 @@ class VBOATS:
         cutoffY = np.argmin(hist[1:])+1
 
         # print("[INFO] Filtering Vmap")
-        _, newV = self.vmap_filter_tester(vmapIn,nStrips=nThreshsV,yCutoff=cutoffY,timing=debug_timing)
+        if nThreshsV == 1: tmpN = 2
+        else: tmpN = nThreshsV
+        _, newV = self.vmap_filter_tester(vmapIn,nStrips=tmpN,yCutoff=cutoffY,timing=debug_timing)
 
         if not ground_detected:
             th,tw = newV.shape[:2]
@@ -1136,8 +1151,8 @@ class VBOATS:
         #							U-MAP Specific Functions
         # ==========================================================================
 
-        stripsPu = []
         # print("[INFO] Filtering Umap")
+        stripsPu = []
         stripsU = strip_image(raw_umap, nstrips=nThreshsU)
         for i, strip in enumerate(stripsU):
             if i == 0:
@@ -1386,7 +1401,6 @@ class VBOATS:
         dead_x = self.dead_x; dead_y = self.dead_y
 
         raw_umap, raw_vmap, dt = self.get_uv_map(img)
-        # print("[INFO] pipelineTest() ---- generated vmap shape (H,W,C): %s" % (str(raw_vmap.shape)))
         self.umap_raw = np.copy(raw_umap)
         self.vmap_raw = np.copy(raw_vmap)
         # =========================================================================
@@ -1408,6 +1422,7 @@ class VBOATS:
             raw_vmap = cv2.cvtColor(raw_vmap,cv2.COLOR_GRAY2BGR)
         except: print("[WARNING] ------------  Unnecessary Raw Mappings Color Converting")
 
+        # print("[INFO] pipelineTest() ---- generated vmap shape (H,W,C): %s" % (str(raw_vmap.shape)))
         # ==========================================================================
         #							V-MAP Specific Functions
         # ==========================================================================
@@ -1425,7 +1440,7 @@ class VBOATS:
         hist = np.sum(vmapIn[0:botY,:], axis=1)
         hist = histogram_sliding_filter(hist)
         cutoffY = np.argmin(hist[1:])+1
-        # print("Y Cutoff: %d" % cutoffY)
+        # print("Y Cutoff,nThreshsV: %d, %d" % (cutoffY,nThreshsV))
         _, newV = self.vmap_filter_tester(vmapIn,yCutoff=cutoffY)
 
         if not ground_detected:
