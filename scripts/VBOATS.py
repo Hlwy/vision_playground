@@ -93,30 +93,70 @@ class VBOATS:
             print("[UV Mapping] Input Image Size: (%d, %d) --- w/ max disparity = %.3f" % (h,w, dmax))
             print("[UV Mapping] Disparity Map Sizes --- U-Map (%.2f, %.2f) ||  V-Map (%.2f, %.2f)" % (hu, wu, hv, wv))
 
-        umap = np.zeros((dmax,w,1), dtype=np.uint8)
-        vmap = np.zeros((h,dmax,1), dtype=np.uint8)
+        umap = np.zeros((dmax,w), dtype=np.uint8)
+        vmap = np.zeros((h,dmax), dtype=np.uint8)
 
         for i in range(0,w):
             uscan = img[:,i]
             urow = cv2.calcHist([uscan],[0],None,[dmax],histRange)
             if(verbose): print("\t[U Mapping] Scan[%d] (%s) ---- Scan Histogram (%s)" % (i,', '.join(map(str, uscan.shape)), ', '.join(map(str, urow.shape))))
-            umap[:,i] = urow
+            umap[:,i] = urow[:,0]
 
         for i in range(0,h):
             vscan = img[i,:]
             vrow = cv2.calcHist([vscan],[0],None,[dmax],histRange)
             if(verbose): print("\t[V Mapping] Scan [%d] (%s) ---- Scan Histogram (%s)" % (i,', '.join(map(str, vscan.shape)), ', '.join(map(str, vrow.shape))))
-            vmap[i,:] = vrow
-
-        umap = np.reshape(umap,(dmax,w))
-        vmap = np.reshape(vmap,(h,dmax))
+            vmap[i,:] = vrow[:,0]
 
         if(verbose): print("\t[UV Mapping] U Map = (%s) ----- V Map = (%s)" % (', '.join(map(str, umap.shape)),', '.join(map(str, vmap.shape)) ))
 
         if(timing):
             t1 = time.time()
             dt = t1 - t0
-            print("\t[UV Mapping] --- Took %f seconds to complete" % (dt))
+            print("\t[INFO] get_uv_map() --- Took %f seconds (%.2f Hz) to complete" % (dt, 1/dt))
+
+        return umap,vmap, dt
+
+
+    def get_uv_map_test(self, img, verbose=False, timing=False):
+        """ ===================================================================
+        Create the UV Disparity Mappings from a given depth (disparity) image
+        ==================================================================== """
+        dt = 0
+        umap = []; vmap = []
+        if(timing): t0 = time.time()
+        dmax = np.uint8(np.max(img)) + 1
+
+        # Determine stats for U and V map images
+        h, w = img.shape[:2]
+        hu, wu = dmax, w
+        hv, wv = h, dmax
+        histRange = (0,dmax)
+
+        if(verbose):
+            print("[UV Mapping] Input Image Size: (%d, %d) --- w/ max disparity = %.3f" % (h,w, dmax))
+            print("[UV Mapping] Disparity Map Sizes --- U-Map (%.2f, %.2f) ||  V-Map (%.2f, %.2f)" % (hu, wu, hv, wv))
+
+        N = max(h,w)
+        for i in range(0,N):
+            if i < w:
+                uscan = img[:,i]
+                urow = cv2.calcHist([uscan],[0],None,[dmax],histRange)
+                umap.append(urow[:,0])
+            if i < h:
+                vscan = img[i,:]
+                vrow = cv2.calcHist([vscan],[0],None,[dmax],histRange)
+                vmap.append(vrow[:,0])
+
+        umap = np.transpose(np.array(umap, dtype=np.uint8))
+        vmap = np.array(vmap, dtype=np.uint8)
+
+        if(verbose): print("\t[UV Mapping] U Map = (%s) ----- V Map = (%s)" % (', '.join(map(str, umap.shape)),', '.join(map(str, vmap.shape)) ))
+
+        if(timing):
+            t1 = time.time()
+            dt = t1 - t0
+            print("\t[INFO] get_uv_map_test() --- Took %f seconds (%.2f Hz) to complete" % (dt, 1/dt))
 
         return umap,vmap, dt
     def extract_contour_bounds(self, cnts, verbose=False, timing=False):
@@ -139,8 +179,7 @@ class VBOATS:
         if(timing):
             t1 = time.time()
             dt = t1 - t0
-            print("\t[extract_contour_bounds] --- Took %f seconds to complete" % (dt))
-
+            print("\t[INFO] extract_contour_bounds() --- Took %f seconds (%.2f Hz) to complete" % (dt, 1/dt))
         return xBounds, disparityBounds, dt
     def find_contours(self, _umap, threshold = 30.0, threshold_method = "perimeter", offset=(0,0), max_thresh=1500.0, debug=False):
         """
@@ -173,7 +212,7 @@ class VBOATS:
             print("[ERROR] find_contours --- Unsupported filtering method!")
 
         return filtered_contours,contours
-    def find_obstacles(self, vmap, dLims, xLims, search_thresholds = (3,30), ground_detected=True, verbose=False):
+    def find_obstacles(self, vmap, dLims, xLims, search_thresholds = (3,30), ground_detected=True, verbose=False,timing=False):
         """
         ============================================================================
                         Find obstacles within a given V-Map
@@ -181,6 +220,9 @@ class VBOATS:
         """
         obs = []; obsUmap = []; windows = []; ybounds = []; dBounds = []
         nObs = len(dLims)
+
+        if(timing): t0 = time.time()
+
         for i in range(nObs):
             xs = xLims[i]
             ds = dLims[i]
@@ -204,6 +246,11 @@ class VBOATS:
                 ])
                 windows.append(ws)
                 dBounds.append(ds)
+
+        if(timing):
+            t1 = time.time()
+            dt = t1 - t0
+            print("\t[INFO] find_obstacles() --- Took %f seconds (%.2f Hz) to complete" % (dt, 1/dt))
         return obs, obsUmap, ybounds, dBounds, windows, len(obs)
     def obstacle_search(self, _vmap, x_limits, pixel_thresholds=(1,30), window_size=None, verbose=False, timing=False):
         """
@@ -469,8 +516,7 @@ class VBOATS:
         if(timing):
             t1 = time.time()
             dt = t1 - t0
-            print("\t[get_vmap_mask] --- Took %f seconds to complete" % (dt))
-
+            print("\t[INFO] get_vmap_mask() --- Took %f seconds (%.2f Hz) to complete" % (dt, 1/dt))
         return ground_detected, mask, mask_inv, mean_pxls, windows, dt
     def filter_first_umap_strip(self,umap_strip,max_value,thresholds,ratio_thresh=0.35):
         newStrips = []
@@ -608,9 +654,13 @@ class VBOATS:
         except: print("[WARNING] test_filter_first_umap_strip() ------  Unnecessary Strip Color Conversion Gray -> BGR for \'pStrip\'")
 
         return newStrip, strip, nStrip,pStrip, disp
-    def test_filter_first_umap_strip2(self,umap_strip,max_value,nSubStrips,verbose=False):
-        try: umap_strip = cv2.cvtColor(umap_strip,cv2.COLOR_BGR2GRAY)
-        except: print("[WARNING] test_filter_first_umap_strip() ------  Unnecessary Strip Color Conversion BGR -> Gray")
+    def test_filter_first_umap_strip2(self,umap_strip,max_value,nSubStrips,cvtColor=False,verbose=False, timing=False):
+        if cvtColor:
+            try: umap_strip = cv2.cvtColor(umap_strip,cv2.COLOR_BGR2GRAY)
+            except: print("[WARNING] test_filter_first_umap_strip() ------  Unnecessary Strip Color Conversion BGR -> Gray")
+
+        if(timing): t0 = time.time()
+
         n = nSubStrips
         strip = np.copy(umap_strip)
         hs, ws = strip.shape[:2];             dh = hs / n
@@ -718,14 +768,22 @@ class VBOATS:
         topHalfM = cv2.morphologyEx(topHalf, cv2.MORPH_OPEN, kernelT)
 
         newStrip = np.concatenate((topHalfM,botHalf), axis=0)
+        if cvtColor:
+            try: newStrip = cv2.cvtColor(newStrip,cv2.COLOR_GRAY2BGR)
+            except: print("[WARNING] test_filter_first_umap_strip2() ------  Unnecessary Strip Color Conversion Gray -> BGR for \'newStrip\'")
 
-        try: newStrip = cv2.cvtColor(newStrip,cv2.COLOR_GRAY2BGR)
-        except: print("[WARNING] test_filter_first_umap_strip() ------  Unnecessary Strip Color Conversion Gray -> BGR for \'newStrip\'")
-
+        if(timing):
+            t1 = time.time()
+            dt = t1 - t0
+            print("\t[INFO] test_filter_first_umap_strip2() --- Took %f seconds (%.2f Hz) to complete" % (dt, 1/dt))
         return newStrip, strip
-    def second_umap_strip_filter(self, umap_strip, verbose=False):
-        try: umap_strip = cv2.cvtColor(umap_strip,cv2.COLOR_BGR2GRAY)
-        except: print("[WARNING] second_umap_strip_filter() ------  Unnecessary Strip Color Conversion BGR -> Gray")
+    def second_umap_strip_filter(self, umap_strip, cvtColor=False, verbose=False, timing=False):
+        if cvtColor:
+            try: umap_strip = cv2.cvtColor(umap_strip,cv2.COLOR_BGR2GRAY)
+            except: print("[WARNING] second_umap_strip_filter() ------  Unnecessary Strip Color Conversion BGR -> Gray")
+
+        if(timing): t0 = time.time()
+
         strip = np.copy(umap_strip)
         hs, ws = strip.shape[:2]
         # print("second_umap_strip_filter() --- Input Strip Shape: %s" % str(strip.shape[:2]))
@@ -772,17 +830,22 @@ class VBOATS:
 
         _,newStrip = cv2.threshold(newStrip, restThresh,255,cv2.THRESH_TOZERO)
         # print("second_umap_strip_filter() --- Output Strip Shape: %s" % str(newStrip.shape[:2]))
+        if cvtColor:
+            try: newStrip = cv2.cvtColor(newStrip,cv2.COLOR_GRAY2BGR)
+            except: print("[WARNING] second_umap_strip_filter() ------  Unnecessary Strip Color Conversion Gray -> BGR for \'newStrip\'")
 
-        try: newStrip = cv2.cvtColor(newStrip,cv2.COLOR_GRAY2BGR)
-        except: print("[WARNING] second_umap_strip_filter() ------  Unnecessary Strip Color Conversion Gray -> BGR for \'newStrip\'")
-
+        if(timing):
+            t1 = time.time()
+            dt = t1 - t0
+            print("\t[INFO] second_umap_strip_filter() --- Took %f seconds (%.2f Hz) to complete" % (dt, 1/dt))
         return newStrip
-    def vmap_filter_tester(self, vmap, nStrips=5, yCutoff=None, verbose=False):
+    def vmap_filter_tester(self, vmap, nStrips=5, yCutoff=None, verbose=False, timing=False):
+        newStrips = []
+
+        if(timing): t0 = time.time()
 
         stripsV = strip_image(vmap, nstrips=nStrips,horizontal_strips=False)
         subStrips = strip_image(stripsV[0], nstrips=nStrips,horizontal_strips=False)
-
-        newStrips = []
         #======================================================================
         #                      FILTER STEP #1
         #======================================================================
@@ -817,18 +880,17 @@ class VBOATS:
         mns = [mn0,mn1,mn2]
 
         relMaxRatio = mx0/float(vstripMax)
-        tmpRatio0 = np.nan_to_num(mn0/float(mx0));     tmpRatio1 = np.nan_to_num(mn1/float(mx1));     tmpRatio2 = np.nan_to_num(mn2/float(mx2))
+        tmpRatio0 = np.nan_to_num(mn0/float(mx0))
+        tmpRatio1 = np.nan_to_num(mn1/float(mx1))
+        # tmpRatio2 = np.nan_to_num(mn2/float(mx2))
         tmpRatio3 = tmpRatio1 + tmpRatio1*tmpRatio0
         tmpRatio4 = relMaxRatio + relMaxRatio*tmpRatio0
-        rats = [relMaxRatio, tmpRatio0,tmpRatio1,tmpRatio2,tmpRatio3,tmpRatio4]
+        # rats = [relMaxRatio, tmpRatio0,tmpRatio1,tmpRatio2,tmpRatio3,tmpRatio4]
 
-        tmpTH0 = int((1-tmpRatio0)*mx0)
-        tmpTH1 = int(tmpRatio1*mx1)
-        tmpTH2 = int(tmpRatio2*mx2)
         tmpTH3 = int(tmpRatio3*mx1)
         tmpTH4 = int((1-tmpRatio3)*mx1)
         tmpTH5 = int(tmpRatio4*mx2)
-        ths = [tmpTH0,tmpTH1,tmpTH2,tmpTH3,tmpTH4,tmpTH5]
+        # ths = [tmpTH0,tmpTH1,tmpTH2,tmpTH3,tmpTH4,tmpTH5]
 
         topCut = 100
         topHalf = tmpdead[0:topCut, :]
@@ -877,16 +939,11 @@ class VBOATS:
         maxGain = (mx1)/float(mx0)
         meanGain = (mn1-mn0)/float(mn0)
 
-        tmpRatio0 = (mn0*meanGain)/float(mx0);     tmpRatio1 = mn1/float(mx1)
-        tmpRatio2 = tmpRatio0 + maxGain*tmpRatio0
-        tmpRatio3 = tmpRatio1 + tmpRatio1*tmpRatio2
-        rats = [tmpRatio0,tmpRatio1,tmpRatio2,tmpRatio3]
+        tmpRatio0 = np.nan_to_num((mn0*meanGain)/float(mx0))
+        tmpRatio2 = np.nan_to_num(tmpRatio0 + maxGain*tmpRatio0)
 
-        tmpTH0 = int((1-tmpRatio0)*mx1)
-        tmpTH1 = int(tmpRatio1*mx1)
         tmpTH2 = int(tmpRatio2*mx1)
         tmpTH3 = int(tmpRatio0*mx1)
-        ths = [tmpTH0,tmpTH1,tmpTH2,tmpTH3]
 
         _,restMask = cv2.threshold(claheRest, tmpTH3,255,cv2.THRESH_TOZERO)
         tmpRest = cv2.bitwise_and(rest_strip,rest_strip,mask=restMask)
@@ -903,8 +960,11 @@ class VBOATS:
             topHalf = lHalf[0:tmpH/2, :]
             botHalf = lHalf[tmpH/2:tmpH, :]
 
-        _,topHalf = cv2.threshold(topHalf, tmpTH2+10,255,cv2.THRESH_TOZERO)
-        _,botHalf = cv2.threshold(botHalf, tmpTH2-10,255,cv2.THRESH_TOZERO)
+        if self.is_ground_present: step2Thresh = tmpTH2
+        else: step2Thresh = tmpTH2/2
+
+        _,topHalf = cv2.threshold(topHalf, step2Thresh+10,255,cv2.THRESH_TOZERO)
+        _,botHalf = cv2.threshold(botHalf, step2Thresh-10,255,cv2.THRESH_TOZERO)
         tmpLStrip = np.concatenate((topHalf,botHalf), axis=0)
         newVstrip0 = np.concatenate((rHalf,tmpLStrip), axis=1)
 
@@ -930,22 +990,19 @@ class VBOATS:
         mx0 = np.max(strip1);       mx1 = np.max(claheRest1);  mxs = [mx0,mx1]
         mn0 = np.mean(strip1);      mn1 = np.mean(claheRest1); mns = [mn0,mn1]
 
-        maxGain = (mx1)/float(mx0)
-        meanGain = (mn1-mn0)/float(mn0)
+        maxGain = np.nan_to_num((mx1)/float(mx0))
+        meanGain = np.nan_to_num((mn1-mn0)/float(mn0))
 
         relMaxRatio = mx0/float(vstripMax)
-        tmpRatio0 = (mn0*meanGain)/float(mx0);     tmpRatio1 = mn1/float(mx1)
-        tmpRatio2 = tmpRatio0 + relMaxRatio*tmpRatio0
-        tmpRatio3 = tmpRatio1 + tmpRatio1*tmpRatio2
-        rats = [relMaxRatio,tmpRatio0,tmpRatio1,tmpRatio2,tmpRatio3]
+        tmpRatio0 = np.nan_to_num((mn0*meanGain)/float(mx0))
+        tmpRatio1 = np.nan_to_num(mn1/float(mx1))
+        tmpRatio2 = np.nan_to_num(tmpRatio0 + relMaxRatio*tmpRatio0)
 
         tmpTH0 = int((1-tmpRatio0)*mx1)
         tmpTH1 = int(tmpRatio1*mx1)
         tmpTH2 = int(tmpRatio2*mx1)
         tmpTH3 = tmpTH2+tmpTH1
-        tmpTH4 = int(tmpTH2 + tmpTH2*relMaxRatio)
         tmpTH5 = int((1-relMaxRatio)*mx0)
-        ths = [tmpTH0,tmpTH1,tmpTH2,tmpTH3,tmpTH4,tmpTH5]
 
         _,tmp = cv2.threshold(strip1, tmpTH5,255,cv2.THRESH_TOZERO)
         _,tmpMask = cv2.threshold(claheRest1, tmpTH0,255,cv2.THRESH_TOZERO)
@@ -988,12 +1045,169 @@ class VBOATS:
             newStrips.append(tmpStr)
 
         newVmap = np.concatenate(newStrips, axis=1)
-        vizVmap = np.copy(newVmap)
-        _,vizVmap = cv2.threshold(vizVmap, 0,255,cv2.THRESH_BINARY)
+        if(timing):
+            t1 = time.time()
+            dt = t1 - t0
+            print("\t[INFO] vmap_filter_tester() --- Took %f seconds (%.2f Hz) to complete" % (dt, 1/dt))
         return np.copy(vmap), np.copy(newVmap)
 
+    def pipelineV1(self,_img, timing=False,debug_timing=False):
+        """
+        ============================================================================
+                                pipeline version 1.0
+        ============================================================================
+        """
+        dt = 0
+        threshsU = [0.25, 0.3, 0.3, 0.7,0.5,0.5]
+        threshsV = [5, 70, 60,60,60]
+        threshsCnt = [15.0,100.0,80.0,80.0,40.0,40.0]
 
-    def pipeline(self, _img, threshU1=7, threshU2=20,threshV2=70, timing=False):
+        nThreshsU = int(math.ceil((self.dmax/256.0) * len(threshsU)))
+        nThreshsV = int(math.ceil((self.dmax/256.0) * len(threshsV)))
+
+        if(timing): t0 = time.time()
+
+        # =========================================================================
+        img = self.read_image(_img)
+        # print("[INFO] Image Read")
+        kernelI = cv2.getStructuringElement(cv2.MORPH_RECT,(2,2))
+        img = cv2.morphologyEx(img, cv2.MORPH_CLOSE, kernelI)
+
+        h, w = img.shape[:2]
+        dead_x = self.dead_x; dead_y = self.dead_y
+
+        # print("[INFO] generating uvmap")
+        raw_umap, raw_vmap, dt = self.get_uv_map(img,timing=debug_timing)
+
+        # raw_umap, raw_vmap, dt = self.get_uv_map_test(img,timing=debug_timing)
+        self.umap_raw = np.copy(raw_umap)
+        self.vmap_raw = np.copy(raw_vmap)
+        # =========================================================================
+        cv2.rectangle(raw_umap,(0,raw_umap.shape[0]-dead_y),(raw_umap.shape[1],raw_umap.shape[0]),(0,0,0), cv2.FILLED)
+        cv2.rectangle(raw_vmap,(raw_vmap.shape[1]-dead_x,0),(raw_vmap.shape[1],raw_vmap.shape[0]),(0,0,0), cv2.FILLED)
+        tmp1 = raw_vmap[:, 0:40]
+        tmp2 = raw_vmap[:, 40:raw_vmap.shape[0]]
+
+        _,tmp1 = cv2.threshold(tmp1, 5,255,cv2.THRESH_TOZERO)
+        _,tmp2 = cv2.threshold(tmp2, 7,255,cv2.THRESH_TOZERO)
+        raw_vmap = np.concatenate((tmp1,tmp2), axis=1)
+
+        # ==========================================================================
+        #							V-MAP Specific Functions
+        # ==========================================================================
+        # print("[INFO] segmenting ground")
+        ground_detected, mask, maskInv,mPxls, ground_wins,_ = self.get_vmap_mask(raw_vmap,
+            maxStep = 23, threshold=15,window_size=[18,10],min_ground_pixels = 8, shift_gain=0.65,timing=debug_timing)
+
+        self.is_ground_present = ground_detected
+
+        # tmpV = cv2.cvtColor(raw_vmap, cv2.COLOR_BGR2GRAY)
+        tmpV = raw_vmap
+        vmapIn = cv2.bitwise_and(tmpV,tmpV,mask=maskInv)
+
+        botY = int(np.min(mPxls[:,1]))
+        hist = np.sum(vmapIn[0:botY,:], axis=1)
+        hist = histogram_sliding_filter(hist)
+        cutoffY = np.argmin(hist[1:])+1
+
+        # print("[INFO] Filtering Vmap")
+        _, newV = self.vmap_filter_tester(vmapIn,nStrips=nThreshsV,yCutoff=cutoffY,timing=debug_timing)
+
+        if not ground_detected:
+            th,tw = newV.shape[:2]
+            dead_strip = newV[:, 0:30]
+            rest_strip = newV[:, 30:tw]
+            tmpMax = np.max(rest_strip)
+            tmpTH = int(tmpMax*0.8)
+
+            tdh = (th*2)/3
+            topHalf = rest_strip[0:tdh, :]
+            botHalf = rest_strip[tdh:th, :]
+
+            _,topHalf = cv2.threshold(topHalf, tmpTH,255,cv2.THRESH_TOZERO)
+            tmpRest = np.concatenate((topHalf,botHalf), axis=0)
+
+            testV = np.concatenate((dead_strip,tmpRest), axis=1)
+            newV = np.copy(testV)
+
+        vmap = np.copy(newV)
+
+        # ==========================================================================
+        #							U-MAP Specific Functions
+        # ==========================================================================
+
+        stripsPu = []
+        # print("[INFO] Filtering Umap")
+        stripsU = strip_image(raw_umap, nstrips=nThreshsU)
+        for i, strip in enumerate(stripsU):
+            if i == 0:
+                maxdisparity = np.max(raw_umap)
+                stripThreshs = [0.15, 0.25, 0.075, 0.065,0.05,0.025]
+                nSubStrips = int(math.ceil((self.dmax/256.0) * len(stripThreshs)))
+                tmpStrip,_ = self.test_filter_first_umap_strip2(strip,maxdisparity,nSubStrips,timing=debug_timing)
+                # print("tmpStrip Shape: %s" % str(tmpStrip.shape))
+            elif i == 1:
+                tmpStrip = self.second_umap_strip_filter(strip,timing=debug_timing)
+                # print("tmpStrip Shape: %s" % str(tmpStrip.shape))
+            else:
+                tmpMax = np.max(strip)
+                tmpThresh = threshsU[i] * tmpMax
+                _, tmpStrip = cv2.threshold(strip, tmpThresh, 255,cv2.THRESH_TOZERO)
+                # print("tmpStrip Shape: %s" % str(tmpStrip.shape))
+            stripsPu.append(tmpStrip)
+
+        ksz1 = self.kszs[0]
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT,ksz1)
+        if len(stripsPu)>=2:stripsPu[1] = cv2.morphologyEx(stripsPu[1], cv2.MORPH_CLOSE, kernel)
+        if len(stripsPu)>=3: stripsPu[2] = cv2.morphologyEx(stripsPu[2], cv2.MORPH_OPEN, kernel)
+
+        umap = np.concatenate(stripsPu, axis=0)
+
+        # print("[INFO] Finding contours")
+        # ==========================================================================
+        #							Contour Filtering
+        # ==========================================================================
+        # contours = []
+        # for i, strip in enumerate(stripsPu):
+        #     contours,_ += self.find_contours(strip, threshsCnt[i], offset=(0,hUs*i),debug=self.debug)
+        if ground_detected:
+            contour_thresh = self.testHighCntThresh
+            if(self.debug): print("[INFO] pipelineV1 ---- Ground Detected -> filtering contours w/ [%.2f] threshhold" % (contour_thresh))
+        else:
+            contour_thresh = self.testLowCntThresh
+            if(self.debug): print("[INFO] pipelineV1 ---- Ground Not Detected -> filtering contours w/ [%.2f] threshhold" % (contour_thresh))
+
+        contours,raw_cnts = self.find_contours(umap, contour_thresh,debug=self.debug_contours)
+
+        xLims, dLims, _ = self.extract_contour_bounds(contours,timing=debug_timing)
+        self.xBounds = xLims
+        self.disparityBounds = dLims
+        self.filtered_contours = contours
+        self.contours = raw_cnts
+
+        # ==========================================================================
+        #							Obstacle Searching
+        # ==========================================================================
+        # print("[INFO] Finding Obstacles")
+        obs, obsU, ybounds, dbounds, windows, nObs = self.find_obstacles(vmap, dLims, xLims, ground_detected=ground_detected,verbose=self.debug_obstacle_search,timing=debug_timing)
+
+        # =========================================================================
+        if(timing):
+            t1 = time.time()
+            dt = t1 - t0
+            print("[INFO] pipelineV1() --- Took %f seconds (%.2f Hz) to complete" % (dt, 1/dt))
+
+        self.nObs = nObs
+        self.obstacles = obs
+        self.obstacles_umap = obsU
+        self.yBounds = ybounds
+        self.dbounds = dbounds
+        self.ground_pxls = mPxls
+        self.windows_obstacles = windows
+        self.windows_ground = ground_wins
+        return umap, vmap,dt
+
+    def pipelineV0(self, _img, threshU1=7, threshU2=20,threshV2=70, timing=False):
         """
         ============================================================================
                                     Entire pipeline
@@ -1236,14 +1450,6 @@ class VBOATS:
         except: print("[WARNING] ------------  Unnecessary Umap Color Converting")
 
         self.vmap_filtered = np.copy(newV)
-
-        # tmp = np.copy(tmpV)
-        # vmap = cv2.bitwise_and(tmp,tmp,mask=maskInv)
-
-        # try: newV = cv2.cvtColor(newV, cv2.COLOR_BGR2GRAY)
-        # except: print("[WARNING] ------------  Unnecessary Vmap Color Converting")
-
-        self.vmap_processed = np.copy(newV)
         vmap = np.copy(newV)
         # =========================================================================
 
@@ -1262,10 +1468,10 @@ class VBOATS:
                 # tmpStrip = self.filter_first_umap_strip(strip,maxdisparity,stripThreshs)
                 nSubStrips = int(math.ceil((self.dmax/256.0) * len(stripThreshs)))
                 # _,_,_,tmpStrip,_ = self.test_filter_first_umap_strip(strip,maxdisparity,nSubStrips, ratio_thresh=self.testRestThreshRatio)
-                tmpStrip,_ = self.test_filter_first_umap_strip2(strip,maxdisparity,nSubStrips)
+                tmpStrip,_ = self.test_filter_first_umap_strip2(strip,maxdisparity,nSubStrips,cvtColor=True)
                 # print("tmpStrip Shape: %s" % str(tmpStrip.shape))
             elif i == 1:
-                tmpStrip = self.second_umap_strip_filter(strip)
+                tmpStrip = self.second_umap_strip_filter(strip,cvtColor=True)
                 # print("tmpStrip Shape: %s" % str(tmpStrip.shape))
             else:
                 tmpMax = np.max(strip)
@@ -1322,7 +1528,7 @@ class VBOATS:
         if(timing):
             t1 = time.time()
             dt = t1 - t0
-            print("\t[uv_pipeline] --- Took %f seconds (%.2f Hz) to complete" % (dt, 1/dt))
+            print("[INFO] pipelineTest() --- Took %f seconds (%.2f Hz) to complete" % (dt, 1/dt))
 
         self.nObs = nObs
         self.obstacles = obs
