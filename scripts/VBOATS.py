@@ -356,14 +356,14 @@ class VBOATS:
             print("\t[obstacle_search] --- Took %f seconds to complete" % (dt))
 
         return yLims, windows, dt
-    def get_vmap_mask(self, vmap, threshold=20, min_ground_pixels=6, shift_gain=2, dxmean_thresh=1.0, maxStep=14, deltas=(0,20), mask_size = [10,30], window_size = [10,30], draw_method=1, verbose=False, timing=False):
+    def get_vmap_mask(self, vmap, threshold=20, min_ground_pixels=6, shift_gain=2, dxmean_thresh=1.0, max_extensions=3, extension = 4, maxStep=14, deltas=(0,20), mask_size = [10,30], window_size = [10,30], draw_method=1, verbose=True, timing=False):
         """
         ============================================================================
         	Abstract a mask image for filtering out the ground from a V-Map
         ============================================================================
         """
         flag_done = False
-        count = 0; dt = 0
+        count = 0; dt = 0; nExtensions = 0
         prev_xmean = mean_count = mean_sum = 0
 
         good_inds = []; mean_pxls = []; windows = []; masks = []
@@ -407,10 +407,8 @@ class VBOATS:
         if(verbose): print("[INFO] get_vmap_mask() ---- Starting Ground Search Technique...")
         # Begin Sliding Window Search Technique
         while(count <= maxStep and not flag_done):
-            # if count == 0:
-            #     dWx = dWyO * 4
-            #     dWy = dWxO * 4
-                # dWx = int(dWx*4)
+            if count == 0: dWy = dWyO*2
+            else: dWy = dWyO
             # TODO: Modify search window width depending on the current disparity
             if(xk >= w/2): dWx = dWx
             elif(xk >= w):  # If we are at image width we must stop
@@ -447,41 +445,40 @@ class VBOATS:
                 else: mean_pxls.append(np.array([xmean,ymean]))
 
                 dXmean = xmean - prev_xmean
-
                 # yk = yk - 2*dWy
                 yk = yk - dWy
-                if dXmean < 0:
+
+                # Update New window center coordinates
+                if dXmean > 3:
+                    dWx = dWxO + 10
+                    # dWy = dWyO - 5
+                    xk += 5
+                    yk += 5
+                elif 1 < dXmean <= 3:
+                    dWx = dWxO + 5
+                    # dWy = dWyO - 3
+                    xk += 8
+                elif dXmean < 0:
                     if dXmean < -3: xk = xk + abs(dXmean*2) + dWx/2
                     else: xk = xmean + abs(dXmean) + dWx/2
-                else: xk = xmean + int((dWx * shift_gain))
+                else:
+                    dWx = dWxO
+                    xk = xmean + int((dWx * shift_gain))
 
-                if dXmean > 3: xk += 5
-                elif dXmean == 3: xk += 3
-                # Draw current window onto mask template
-                my_low = ymean - dMy;          	my_high = ymean + dMy
-                mx_low = xmean - dMx; 			mx_high = xmean + dMx
-                masks.append([ (mx_low,my_high), (mx_high,my_low) ])
-                # Update New window center coordinates
-                # dchange =
-                # tmpDx = dWx
-                if dXmean > 3: dWx = dWxO + 6
-                elif 1 < dXmean <= 3: dWx = dWxO + 3
-                else: dWx = dWxO
-
-                if(verbose):
-                    # print("\tWindow %d [@ (%d,%d)] -- PxlCount = %d -- " % (count,xk,yk,nPxls))
-                    print("\tWindow %d [@ (%d,%d)]:\tPxlCount = %d - - dXmean = %.3f - - newWinWidth = %d" % (mean_count,xk,yk,nPxls,dXmean,dWx))
-
-                # xk = xmean + dWx/2
-                # yk = yk - 2*dWy
-
-                # # Previous Method
-                # xk = xmean + dWx
-                # yk = ymean - 2*dWy
                 mean_sum += dXmean
                 mean_count += 1
                 prev_xmean = xmean
-                # dWx = dWxT
+                running_avg = mean_sum / float(mean_count)
+                if(verbose): print("\tWindow %d [@ (%d,%d)]:\tPxlCount = %d - - dXmean = %.3f - - newWinWidth = %d - - avgDxmean = %.2f" % (mean_count,xk,yk,nPxls,dXmean,dWx,running_avg))
+                if float(running_avg) < dxmean_thresh:
+                    if count+1 > maxStep and nExtensions < max_extensions:
+                        nExtensions+=1
+                        maxStep+=extension
+                        # xk += 5
+                        # yk += 5
+                        print("\t[INFO] Extending max search steps (%d) %d times" % (extension,nExtensions))
+                # if running_avg >= dxmean_thresh and nExtensions > 1:
+                #     flag_done = True
             else: flag_done = True
             count += 1
         if mean_count == 0: mean_count = 1
@@ -500,15 +497,11 @@ class VBOATS:
                 tmpPxl = np.array([ [mean_pxls[-1,0],mean_pxls[0,1]] ])
                 tmpPxls = np.concatenate((mean_pxls,tmpPxl), axis=0)
                 cv2.fillPoly(black, [tmpPxls], (255,255,255))
-            else:
-                for mask in masks:
-                    cv2.rectangle(black,mask[0],mask[1],(255,255,255), cv2.FILLED)
+            else: [cv2.rectangle(black,mask[0],mask[1],(255,255,255), cv2.FILLED) for mask in masks]
             ground_detected = True
-        else:
-            ground_detected = False
-        # # ==========================================================================
-        # cv2.rectangle(black,(0,0),(dx,h),(255,255,255), cv2.FILLED)
-        # # ==========================================================================
+        else: ground_detected = False
+        # ==========================================================================
+
         mask = cv2.cvtColor(black,cv2.COLOR_BGR2GRAY)
         mask_inv = cv2.bitwise_not(mask)
         if(timing):
@@ -964,7 +957,7 @@ class VBOATS:
         if self.is_ground_present: step2Thresh = tmpTH2
         else: step2Thresh = tmpTH2/2
 
-        print("[INFO] vmap_filter() --- step2Thresh: %d" % step2Thresh)
+        # print("[INFO] vmap_filter() --- step2Thresh: %d" % step2Thresh)
 
         _,topRHalf = cv2.threshold(topRHalf, step2Thresh+10,255,cv2.THRESH_TOZERO)
         _,topLHalf = cv2.threshold(topLHalf, step2Thresh+10,255,cv2.THRESH_TOZERO)
@@ -1063,7 +1056,7 @@ class VBOATS:
         ============================================================================
         """
         dt = 0
-        threshsU = [0.25, 0.3, 0.3, 0.7,0.5,0.5]
+        threshsU = [0.25, 0.3, 0.3, 0.8,0.8,0.8]
         threshsV = [5, 70, 60,60,60]
         threshsCnt = [15.0,100.0,80.0,80.0,40.0,40.0]
 
@@ -1078,9 +1071,9 @@ class VBOATS:
         kernelI = cv2.getStructuringElement(cv2.MORPH_RECT,(2,2))
         img = cv2.morphologyEx(img, cv2.MORPH_CLOSE, kernelI)
 
-        # _, tmpImg = cv2.threshold(img,0,255,cv2.THRESH_BINARY_INV)
+        # _, tmpImg = cv2.threshold(Timg,0,255,cv2.THRESH_BINARY_INV)
         # img = cv2.addWeighted(img,1.0,tmpImg,1.0,0.0)
-
+        # print(img.shape)
         h, w = img.shape[:2]
         dead_x = self.dead_x; dead_y = self.dead_y
 
@@ -1095,6 +1088,10 @@ class VBOATS:
         cv2.rectangle(raw_umap,(0,raw_umap.shape[0]-dead_y),(raw_umap.shape[1],raw_umap.shape[0]),(0,0,0), cv2.FILLED)
         cv2.rectangle(raw_vmap,(raw_vmap.shape[1]-dead_x,0),(raw_vmap.shape[1],raw_vmap.shape[0]),(0,0,0), cv2.FILLED)
 
+        ground_detected, mask, maskInv,mPxls, ground_wins,_ = self.get_vmap_mask(raw_vmap,
+            maxStep = 19, threshold=15,window_size=[18,12],min_ground_pixels = 8, shift_gain=0.65,timing=debug_timing)
+        self.is_ground_present = ground_detected
+
         tmp1 = raw_vmap[:, 0:40]
         tmp2 = raw_vmap[:, 40:raw_vmap.shape[0]]
 
@@ -1102,20 +1099,20 @@ class VBOATS:
         _,tmp2 = cv2.threshold(tmp2, 7,255,cv2.THRESH_TOZERO)
         raw_vmap = np.concatenate((tmp1,tmp2), axis=1)
 
-        try: raw_vmap = cv2.cvtColor(raw_vmap,cv2.COLOR_GRAY2BGR)
-        except: print("[WARNING] ------------  Unnecessary Color Conversion, post Deadzoning"); pass
+        # try: raw_vmap = cv2.cvtColor(raw_vmap,cv2.COLOR_GRAY2BGR)
+        # except: print("[WARNING] ------------  Unnecessary Color Conversion, post Deadzoning"); pass
 
         # ==========================================================================
         #							V-MAP Specific Functions
         # ==========================================================================
         # print("[INFO] segmenting ground")
-        ground_detected, mask, maskInv,mPxls, ground_wins,_ = self.get_vmap_mask(raw_vmap,
-            maxStep = 23, threshold=15,window_size=[18,10],min_ground_pixels = 8, shift_gain=0.65,timing=debug_timing)
+        # ground_detected, mask, maskInv,mPxls, ground_wins,_ = self.get_vmap_mask(raw_vmap,
+        #     maxStep = 19, threshold=15,window_size=[18,10],min_ground_pixels = 8, shift_gain=0.65,timing=debug_timing)
+        #
+        # self.is_ground_present = ground_detected
 
-        self.is_ground_present = ground_detected
-
-        # tmpV = raw_vmap
-        tmpV = cv2.cvtColor(raw_vmap, cv2.COLOR_BGR2GRAY)
+        tmpV = raw_vmap
+        # tmpV = cv2.cvtColor(raw_vmap, cv2.COLOR_BGR2GRAY)
         vmapIn = cv2.bitwise_and(tmpV,tmpV,mask=maskInv)
 
         botY = int(np.min(mPxls[:,1]))
