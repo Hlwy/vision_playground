@@ -193,7 +193,8 @@ class VBOATS:
 
         if(threshold_method == "perimeter"):
             filtered_contours = [cnt for cnt in contours if cv2.arcLength(cnt,True) >= threshold]
-            filtered_contours = [cnt for cnt in filtered_contours if cv2.arcLength(cnt,True) <= max_thresh]
+            if max_thresh > 0: # Dont filter out big contours
+                filtered_contours = [cnt for cnt in filtered_contours if cv2.arcLength(cnt,True) <= max_thresh]
             if(debug):
                 raw_perimeters = np.array([cv2.arcLength(cnt,True) for cnt in contours])
                 filtered_perimeters = np.array([cv2.arcLength(cnt,True) for cnt in filtered_contours])
@@ -356,7 +357,7 @@ class VBOATS:
             print("\t[obstacle_search] --- Took %f seconds to complete" % (dt))
 
         return yLims, windows, dt
-    def get_vmap_mask(self, vmap, threshold=20, min_ground_pixels=6, shift_gain=2, dxmean_thresh=1.0, max_extensions=3, extension = 4, maxStep=14, deltas=(0,20), mask_size = [10,30], window_size = [10,30], draw_method=1, verbose=True, timing=False):
+    def get_vmap_mask(self, vmap, threshold=20, min_ground_pixels=6, shift_gain=2, dxmean_thresh=1.0, max_extensions=3, extension = 4, maxStep=14, deltas=(0,20), mask_size = [10,30], window_size = [10,30], draw_method=1, verbose=False, timing=False):
         """
         ============================================================================
         	Abstract a mask image for filtering out the ground from a V-Map
@@ -476,7 +477,7 @@ class VBOATS:
                         maxStep+=extension
                         # xk += 5
                         # yk += 5
-                        print("\t[INFO] Extending max search steps (%d) %d times" % (extension,nExtensions))
+                        if self.debug: print("\t[INFO] Extending max search steps (%d) %d times" % (extension,nExtensions))
                 # if running_avg >= dxmean_thresh and nExtensions > 1:
                 #     flag_done = True
             else: flag_done = True
@@ -1686,6 +1687,8 @@ class VBOATS:
         ds = np.array(self.dbounds)
         obs = self.obstacles
         nObs = len(ds)
+        nObsNew = 0
+        if verbose: print("[INFO] VBOATS.py --- %d Obstacles Found" % (nObs))
         if(nObs is not 0):
             for i in range(nObs):
                 disparities = ds[i]
@@ -1693,12 +1696,21 @@ class VBOATS:
                 vs = [obs[i][0][1], obs[i][1][1]]
                 z,ux,uy,uz = self.calculate_distance(umap,us,disparities,vs)
 
-                theta = math.acos((uz/z))
+                theta = math.atan2(ux,uz)
                 theta = np.nan_to_num(theta)
+                # if verbose: print("\tObstacle [%d] Distance, Angle: %.3f, %.3f" % (i,z,np.rad2deg(theta)))
 
-                distances.append(z)
-                angles.append(theta)
-                if verbose: print("Obstacle [%d] Distance, Angle: %.3f, %.3f" % (i,z,np.rad2deg(theta)))
+                if(z > 0.05):
+                    distances.append(z)
+                    angles.append(theta)
+                    nObsNew+=1
+                    if verbose: print("\tObstacle [%d] Distance, Angle: %.3f, %.3f" % (i,z,np.rad2deg(theta)))
+        else:
+            distances.append(-1)
+            angles.append(0)
+        if(nObsNew == 0):
+            distances.append(-1)
+            angles.append(0)
 
         return distances,angles
 

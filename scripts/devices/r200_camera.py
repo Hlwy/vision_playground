@@ -6,7 +6,6 @@ import matplotlib.pyplot as plt
 
 pp = pprint.PrettyPrinter(indent=4)
 
-
 class CameraR200(object):
     def __init__(self):
         self.flag_save = 0
@@ -16,7 +15,6 @@ class CameraR200(object):
         self.last = time.time()
         self.smoothing = 0.9
         self.fps_smooth = 60
-
 
         # Attempt to establish camera service
         try: self.srv = pyrs.Service()
@@ -42,13 +40,12 @@ class CameraR200(object):
 
     def __del__(self):
         print("[INFO] Closing CameraR200 object")
+
+    def close(self):
         if(self.dev is not None): self.dev.stop()
         if(self.srv is not None): self.srv.stop()
         if(self.writerD is not None): self.writerD.release()
         if(self.writerRGB is not None): self.writerRGB.release()
-
-    # def close(self):
-    #     self.__del__()
 
     def apply_configuration(self, lr_exposure=100.0, lr_gain=137.0, ivcam_preset=0):
         try:  # set custom gain/exposure values to obtain good depth image
@@ -68,7 +65,7 @@ class CameraR200(object):
         dscale = self.dev.depth_scale
         if(verbose): print(dscale)
 
-        return intr
+        return intr, dscale
 
     def get_extrinsics(self, stream_range=(2,3), verbose=False):
         extr = self.dev.get_device_extrinsics(stream_range[0],stream_range[1])
