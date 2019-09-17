@@ -6,11 +6,52 @@ import matplotlib.pyplot as plt
 pp = pprint.PrettyPrinter(indent=4)
 
 class CameraD415(object):
-    def __init__(self, flag_save=False,use_statistics=False, fps=60,depth_resolution=(640,480),rgb_resolution=(640,480)):
+    def __init__(self, flag_save=False,use_statistics=False, fps=60,depth_resolution=(640,480),rgb_resolution=(640,480),verbose=False):
         self.fps = fps
         self.flag_save = flag_save
         self.frames = None
 
+        ctx = rs.context()
+        # print(len(ctx.devices))
+        for d in ctx.devices:
+            if verbose: print ('Found device: ', \
+            d.get_info(rs.camera_info.name), ' ', \
+            d.get_info(rs.camera_info.serial_number))
+        self.dev = ctx.devices[0]
+        self.dev.hardware_reset()
+        time.sleep(5)
+        is_success = self.hardware_startup()
+        if not is_success:
+            is_success = self.reset()
+            if not is_success:
+                is_retry_success = self.reset()
+                if not is_retry_success:
+                    raise ValueError('A very specific bad thing happened.')
+        else: print("[INFO] CameraD415() -- Initialization successful!!!")
+
+        self.dscale = self.get_depth_scale()
+        self.intrinsics = self.get_intrinsics()
+        self.extrinsics = self.get_extrinsics()
+
+        if(self.flag_save): # Configure depth and color streams
+            fourcc = cv2.VideoWriter_fourcc('M','J','P','G')
+            self.writerD = cv2.VideoWriter("realsense_d415_depth.avi", fourcc, self.fps,(640, 480), True)
+            self.writerRGB = cv2.VideoWriter("realsense_d415_rgb.avi", fourcc, self.fps,(640, 480), True)
+        else:
+            self.writerD = None
+            self.writerRGB = None
+            print("[ERROR] Could not establish CameraD415 VideoWriter's!")
+
+        if(use_statistics): self.dmax_avg = self.calculate_statistics(duration=5.0)
+        else: self.dmax_avg = 65535
+
+    def reset(self):
+        # self.pipeline.stop()
+        self.dev.hardware_reset()
+        is_success = self.hardware_startup()
+        return is_success
+
+    def hardware_startup(self,fps=60,depth_resolution=(640,480),rgb_resolution=(640,480)):
         # Attempt to establish camera configuration
         try:
             self.config = rs.config()
@@ -32,22 +73,8 @@ class CameraD415(object):
             self.profile = None
             print("[ERROR] Could not establish CameraD415 Profile!")
 
-        self.dscale = self.get_depth_scale()
-        self.intrinsics = self.get_intrinsics()
-        self.extrinsics = self.get_extrinsics()
-
-        if(self.flag_save): # Configure depth and color streams
-            fourcc = cv2.VideoWriter_fourcc('M','J','P','G')
-            self.writerD = cv2.VideoWriter("realsense_d415_depth.avi", fourcc, self.fps,(640, 480), True)
-            self.writerRGB = cv2.VideoWriter("realsense_d415_rgb.avi", fourcc, self.fps,(640, 480), True)
-        else:
-            self.writerD = None
-            self.writerRGB = None
-            print("[ERROR] Could not establish CameraD415 VideoWriter's!")
-
-
-        if(use_statistics): self.dmax_avg = self.calculate_statistics(duration=5.0)
-        else: self.dmax_avg = 65535
+        if self.profile is None: return False
+        else: return True
 
     def __del__(self):
         print("[INFO] Closing CameraD415 object")
