@@ -10,6 +10,8 @@ class CameraD415(object):
         self.fps = fps
         self.flag_save = flag_save
         self.frames = None
+        self.writerD = None
+        self.writerRGB = None
 
         ctx = rs.context()
         # print(len(ctx.devices))
@@ -18,8 +20,9 @@ class CameraD415(object):
             d.get_info(rs.camera_info.name), ' ', \
             d.get_info(rs.camera_info.serial_number))
         self.dev = ctx.devices[0]
+        print("[INFO] CameraD415() -- Resetting Hardware...")
         self.dev.hardware_reset()
-        time.sleep(5)
+        time.sleep(2)
         is_success = self.hardware_startup()
         if not is_success:
             is_success = self.reset()
@@ -37,16 +40,13 @@ class CameraD415(object):
             fourcc = cv2.VideoWriter_fourcc('M','J','P','G')
             self.writerD = cv2.VideoWriter("realsense_d415_depth.avi", fourcc, self.fps,(640, 480), True)
             self.writerRGB = cv2.VideoWriter("realsense_d415_rgb.avi", fourcc, self.fps,(640, 480), True)
-        else:
-            self.writerD = None
-            self.writerRGB = None
-            print("[ERROR] Could not establish CameraD415 VideoWriter's!")
+        # else: print("[ERROR] Could not establish CameraD415 VideoWriter's!")
 
         if(use_statistics): self.dmax_avg = self.calculate_statistics(duration=5.0)
         else: self.dmax_avg = 65535
 
     def reset(self):
-        # self.pipeline.stop()
+        print("[INFO] CameraD415() -- Resetting Camera...")
         self.dev.hardware_reset()
         is_success = self.hardware_startup()
         return is_success
@@ -103,9 +103,13 @@ class CameraD415(object):
         return depth_scale
 
     def read(self):
-        self.frames = self.pipeline.wait_for_frames()
-        rgb = self.get_rgb_image()
-        depth = self.get_depth_image()
+        if(self.pipeline.poll_for_frames()):
+            self.frames = self.pipeline.wait_for_frames()
+            rgb = self.get_rgb_image()
+            depth = self.get_depth_image()
+        else:
+            rgb = None
+            depth = None
         return rgb, depth
 
     def get_rgb_image(self):

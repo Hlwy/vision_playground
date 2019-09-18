@@ -1,110 +1,49 @@
 #!/usr/bin/env python
 
 import cv2
+import rospy
 import numpy as np
-import os, csv, time, argparse, math
+import os, csv, time, math
+from sklearn import linear_model
 from matplotlib import pyplot as plt
 
-import rospy
 from sensor_msgs.msg import Image,CompressedImage
 from cv_bridge import CvBridge, CvBridgeError
-
 
 from VBOATS import VBOATS
 from devices.d415_camera import *
 from hyutils.img_utils import *
 from hyutils.uv_mapping_utils import *
-from sklearn import linear_model
 
-def find_rough_ground_breakpoint(_img, verbose = False, debug = False,show_plots=False):
-    h, _ = _img.shape[:2]
-    hist = vertical_hist(_img)
-    smHist = histogram_sliding_filter(hist,window_size=8)
+def groundSeg(filtered_vmap, stopP = 0.85, maxTrials=30,verbose = False,show_plots=False):
+    gndImg = np.copy(filtered_vmap)
+    nonzero = gndImg.nonzero()
+    nonzeroy = np.array(nonzero[0])
+    nonzerox = np.array(nonzero[1])
+    nonzerox = np.reshape(nonzerox,(nonzerox.shape[0],1))
+
+    ransac = linear_model.RANSACRegressor(stop_probability=stopP,max_trials=maxTrials)
+    ransac.fit(nonzerox, nonzeroy)
+    inlier_mask = ransac.inlier_mask_
+    outlier_mask = np.logical_not(inlier_mask)
+
+    line_X = np.arange(nonzerox.min(), nonzerox.max())[:, np.newaxis]
+    line_y_ransac = ransac.predict(line_X)
+
     if(show_plots):
-        plt.figure(1)
+        plt.figure("RANSAC")
         plt.clf()
-        plt.title('Histogram of the image')
-        plt.plot(range(smHist.shape[0]), smHist[:])
-    cnt = 0
-    idxs = []
-    lastIdx = None
-    flag_started = False
-    argIdx = smHist.shape[0]/4
-    if(verbose): print("Starting Search Index: %d" % (argIdx))
-    for i, val in enumerate(smHist[argIdx:]):
-        idx = i+argIdx
-        dval = val - smHist[idx-1]
-        if(dval <= -15.0):
-            if(lastIdx is None):
-                lastIdx = idx
-                idxs.append(idx)
-            cnt += 1
-            flag_started = True
-            if(verbose): print("[#%d] Found Negative Slope = %.1f" % (idx, dval))
-        if(dval >= 0.0):
-            if(flag_started):
-                cnt = 0
-                lastIdx = None
-                if(debug): print("reseting")
-                flag_started = False
-        if(debug): print(idx,val, dval)
-    if((cnt >= 1) and (lastIdx is not None)):
-        if(debug): print("Found %d Indices with sufficient negative slopes: %s" % (len(idxs),str(idxs)))
-        if(h-20 <= lastIdx <= h):
-            try:
-                lastIdx = idxs[-2]
-                if(h-20 <= lastIdx <= h): lastIdx = -1
-            except:
-                lastIdx = -1
-        if(verbose): print("cnt, lowest idx", cnt, lastIdx)
-        return lastIdx
-    else: return -1
+        plt.subplots_adjust(wspace=0.0,hspace=0.0,left=0.0,right=1.0,top=1.0, bottom=0.0)
+        plt.axis([0.0, 255.0, 480, 0])
+        plt.imshow(gndImg,interpolation='bilinear')
+        plt.scatter(nonzerox,nonzeroy, color='yellowgreen', marker='.',label='Inliers')
+        plt.plot(line_X, line_y_ransac, color='red', linewidth=2, label='RANSAC regressor')
+        plt.show()
 
-
-def get_linear_ground_mask(img, debug_timings=False,verbose=False):
-        # img = np.copy(_img)
-        h, _ = img.shape[:2]
-        if(debug_timings):
-            dt = 0
-            t0 = time.time()
-
-        lowIdx = find_rough_ground_breakpoint(img)
-        if(lowIdx == -1): hm = h/2
-        else: hm = lowIdx
-
-        if(hm >= h-30): hm = h/2
-
-        if(verbose): print("Thresholding Below %d" % (hm))
-        topHalf = img[0:hm, :]
-        botHalf = img[hm:h, :]
-        _,ttHalf = cv2.threshold(topHalf, 225,255,cv2.THRESH_TOZERO)
-        _,tbHalf = cv2.threshold(botHalf, 64,255,cv2.THRESH_TOZERO)
-        tmp = np.concatenate((ttHalf,tbHalf), axis=0)
-
-        nonzero = tmp.nonzero()
-        nonzeroy = np.array(nonzero[0])
-        nonzerox = np.array(nonzero[1])
-        nonzerox = np.reshape(nonzerox,(nonzerox.shape[0],1))
-
-        line_X = np.arange(nonzerox.min(), nonzerox.max())[:, np.newaxis]
-
-        ransac = linear_model.RANSACRegressor(stop_probability=0.85,max_trials=30)
-        ransac.fit(nonzerox, nonzeroy)
-        inlier_mask = ransac.inlier_mask_
-        outlier_mask = np.logical_not(inlier_mask)
-
-        line_y_ransac = ransac.predict(line_X)
-
-        if(debug_timings):
-            t1 = time.time()
-            dt = t1 - t0
-            print("[INFO] get_linear_ground_mask() --- Took %f seconds (%.2f Hz) to complete" % (dt, 1/dt))
-
-        m = ransac.estimator_.coef_
-        b = ransac.estimator_.intercept_
-        # print("Estimated coefficients (RANSAC): m = %.3f | b = %.3f" % (m,b))
-        return m,b, line_X,line_y_ransac
-
+    m = ransac.estimator_.coef_
+    b = ransac.estimator_.intercept_
+    if(verbose): print("Estimated coefficients (RANSAC): m = %.3f | b = %.3f" % (m,b))
+    return m,b, line_X,line_y_ransac
 
 class vboat_testing_node:
     def __init__(self):
@@ -122,10 +61,11 @@ class vboat_testing_node:
 
         # self.dist_pub = rospy.Publisher(rospy.get_namespace()+"/obstacles/distances",FloatArrayStamped,queue_size=1000)
         # self.ang_pub = rospy.Publisher(rospy.get_namespace()+"/obstacles/angles",FloatArrayStamped,queue_size=1000)
-        self.image_pub = rospy.Publisher("vboat_tester/image",Image,queue_size=1000)
 
+        self.image_pub = rospy.Publisher("vboat/image",Image,queue_size=1000)
         self.bridge = CvBridge()
-        self.cam = CameraD415(flag_save=False,use_statistics=False,fps=self.fps)
+
+        self.cam = CameraD415(flag_save=False,use_statistics=False,fps=30, verbose=True)
 
         self.intr = self.cam.get_intrinsics()
         self.extr = self.cam.get_extrinsics()
@@ -146,23 +86,25 @@ class vboat_testing_node:
         self.camcount = 0
         self.count = 0
         self.disp_obs = None
-
-        self.rgbDir = os.path.join(self.save_path, "rgb")
-        self.depthDir = os.path.join(self.save_path, "depth")
-        self.obsDir = os.path.join(self.save_path, "processed")
+        self.prevM = None
+        self.prevB = None
 
         if self.flag_save_imgs:
+            self.rgbDir = os.path.join(self.save_path, "rgb")
+            self.depthDir = os.path.join(self.save_path, "depth")
+            self.obsDir = os.path.join(self.save_path, "processed")
             dirs = [self.save_path,self.rgbDir, self.depthDir, self.obsDir]
             for dir in dirs:
                 if not os.path.exists(dir):
                     os.makedirs(dir)
                     print("Created directory \'%s\' " % dir)
                 else: print("Directory \'%s\' already exists" % dir)
+        print("[INFO] vboat_testing_node --- Started...")
 
     def camCallback(self, _rgb, _depth):
         tmp = _depth/65535.0
         depth = np.uint8(tmp*255)
-        # depth = cv2.cvtColor(depth,cv2.COLOR_GRAY2BGR)
+        depth = cv2.cvtColor(depth,cv2.COLOR_GRAY2BGR)
 
         tmp2 = _depth*0.001
         loc = np.where(tmp2 == 0.0)
@@ -189,33 +131,75 @@ class vboat_testing_node:
             print("[ERROR] vboat_node.py ---- Could not save image to file \'%s\'" % path)
             pass
 
+    def prefilter_vmap(self,_vmap, thresholds = [0.85,0.85,0.75,0.5], verbose=False, debug=False):
+        vMax = np.max(_vmap)
+        nThreshs = int(math.ceil((vMax/256.0)) * 4)
+        if(debug): print("vMax, nThreshs" % (vMax, nThreshs))
+
+        stripsPV = []
+        stripsV = strip_image(_vmap, nstrips=nThreshs, horizontal_strips=False)
+        for i, strip in enumerate(stripsV):
+            tmpMax = np.max(strip)
+            tmpMean = np.mean(strip)
+            tmpStd = np.std(strip)
+            if(tmpMean == 0):
+                stripsPV.append(strip)
+                continue
+            if(verbose): print("---------- [Strip %d] ---------- \r\n\tMax = %.1f, Mean = %.1f, Std = %.1f" % (i,tmpMax,tmpMean,tmpStd))
+            dratio = vMax/255.0
+            relRatio = (tmpMax-tmpStd)/float(vMax)
+            rrelRatio = (tmpMean)/float(tmpMax)
+            if(verbose): print("\tRatios: %.3f, %.3f, %.3f" % (dratio, relRatio, rrelRatio))
+            if(relRatio >= 0.4): gain = relRatio + rrelRatio
+            else: gain = 1.0 - (relRatio + rrelRatio)
+            thresh = int(thresholds[i]* gain * tmpMax)
+            if(verbose): print("\tGain = %.2f, Thresh = %d" % (gain,thresh))
+            _, tmpStrip = cv2.threshold(strip, thresh,255,cv2.THRESH_TOZERO)
+            # _, tmpStrip = cv2.threshold(strip, thresh,255,cv2.THRESH_BINARY)
+            stripsPV.append(tmpStrip)
+
+        filtV = np.concatenate(stripsPV, axis=1)
+        return filtV, stripsV, stripsPV
+
     def update(self):
         img = np.copy(self.disparity)
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT,(3,3))
-        disparity = cv2.morphologyEx(img, cv2.MORPH_CLOSE, kernel)
-        raw_umap, raw_vmap, dt = self.vboat.get_uv_map(disparity)
-
+        # kernel = cv2.getStructuringElement(cv2.MORPH_RECT,(3,3))
+        # disparity = cv2.morphologyEx(img, cv2.MORPH_CLOSE, kernel)
+        raw_umap, raw_vmap, dt = self.vboat.get_uv_map(img)
         self.umap = np.copy(raw_umap)
         self.vmap = np.copy(raw_vmap)
 
-        ###########################################
         cv2.rectangle(raw_vmap,(0,0),(1, raw_vmap.shape[0]),(0,0,0), cv2.FILLED)
-        thresh0 = int(np.max(raw_vmap)*0.025)
-        _,tmp = cv2.threshold(raw_vmap, thresh0,255,cv2.THRESH_TOZERO)
-
-        color = cv2.cvtColor(tmp,cv2.COLOR_GRAY2BGR)
-        ground_display = np.copy(color)
         ###########################################
-        m,b, xs,ys = get_linear_ground_mask(tmp)
-        if(m >= 0.2):
-            h,w = tmp.shape[:2]
+        filtV,_,_ = self.prefilter_vmap(raw_vmap)
+        m,b, xs,ys = groundSeg(filtV)
+        # m,b, xs,ys = get_linear_ground_mask(filtV)
+        ###########################################
+        color = cv2.cvtColor(raw_vmap,cv2.COLOR_GRAY2BGR)
+        ground_display = np.copy(color)
+        ground_display= cv2.applyColorMap(ground_display,cv2.COLORMAP_PARULA)
+        if(m >= 0.3):
+            # Filter out sudden jumps in segmented ground line
+            if(self.prevM is None): self.prevM = m
+            if(self.prevB is None): self.prevB = b
+            dSlope = math.fabs(self.prevM - m)
+            dB = math.fabs(self.prevB - b)
+            print("dSlope, dIntercept = %.3f, %.3f" % (dSlope,dB))
+            if((dSlope >= 2.0) or (dB >= 300.0)):
+                m = self.prevM
+                b = self.prevB
+            self.prevM = m
+            self.prevB = b
+            h,w = filtV.shape[:2]
             yf = int(m*w + b)
             pt1 = (0,int(b))
             pt2 = (w,yf-15)
             pts = np.array([(0, h),pt1,pt2,(w, h),(0, h)])
             cv2.fillPoly(color, [pts], (0,0,0))
             cv2.line(ground_display,pt1, pt2, (0,255,255),1)
-        else: print("No Ground Detected.")
+        else:
+            self.prevM = None; self.prevB = None
+            print("No Ground Detected.")
 
         vmap_mod = cv2.cvtColor(color,cv2.COLOR_BGR2GRAY)
         return vmap_mod,ground_display
@@ -228,6 +212,8 @@ class vboat_testing_node:
             cv2.namedWindow('disparity', cv2.WINDOW_NORMAL)
             cv2.namedWindow('ground_line', cv2.WINDOW_NORMAL)
         while not rospy.is_shutdown():
+            key = cv2.waitKey(5) & 0xFF
+            if key == ord('q'): break
             try:
                 rgb, depth = self.cam.read()
                 if((rgb is None) or (depth is None)): continue
@@ -240,7 +226,7 @@ class vboat_testing_node:
 
                 t1 = time.time()
                 dt = t1 - t0
-                print("[INFO] vboat_testing_node::loop() --- Took %f seconds (%.2f Hz) to complete" % (dt, 1/dt))
+                # print("[INFO] vboat_testing_node::loop() --- Took %f seconds (%.2f Hz) to complete" % (dt, 1/dt))
 
                 # time = rospy.Time.now()
                 # try: self.image_pub.publish(self.bridge.cv2_to_imgmsg(display_obstacles, "bgr8"))
@@ -251,7 +237,6 @@ class vboat_testing_node:
                     cv2.imshow('overlay', overlay)
                     cv2.imshow('disparity', self.disparity)
                     cv2.imshow('ground_line', gndLine)
-                    cv2.waitKey(2)
 
                 if self.flag_save_imgs:
                     img_suffix = "frame_" + str(count) + ".png"
