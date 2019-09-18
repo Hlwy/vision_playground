@@ -15,8 +15,8 @@ from img_utils import *
 
 def make_uv_overlay(_img, umap, vmap,border_width=2,color_uvmaps=True):
     img = np.copy(_img)
-    try: img = cv2.cvtColor(img,cv2.COLOR_GRAY2BGR)
-    except: pass
+    # try: img = cv2.cvtColor(img,cv2.COLOR_GRAY2BGR)
+    # except: pass
     blank = np.ones((umap.shape[0],vmap.shape[1],3),np.uint8)*255
     # borderb = np.ones((2,umap.shape[1],3),dtype=np.uint8); borderb[:] = border_color
     # borders = np.ones((vmap.shape[0],2,3),dtype=np.uint8); borders[:] = border_color
@@ -30,6 +30,10 @@ def make_uv_overlay(_img, umap, vmap,border_width=2,color_uvmaps=True):
     # numap = cv2.applyColorMap(umap,cv2.COLORMAP_JET)
     # nvmap = cv2.applyColorMap(vmap,cv2.COLORMAP_JET)
     if color_uvmaps:
+        # try: umap = cv2.cvtColor(umap,cv2.COLOR_BGR2GRAY)
+        # except: pass
+        # try: vmap = cv2.cvtColor(vmap,cv2.COLOR_BGR2GRAY)
+        # except: pass
         numap = cv2.applyColorMap(umap,cv2.COLORMAP_PARULA)
         nvmap = cv2.applyColorMap(vmap,cv2.COLORMAP_PARULA)
     else:
