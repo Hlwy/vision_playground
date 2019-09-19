@@ -15,7 +15,7 @@ from devices.d415_camera import *
 from hyutils.img_utils import *
 from hyutils.uv_mapping_utils import *
 
-def groundSeg(filtered_vmap, stopP = 0.85, maxTrials=30,verbose = False,show_plots=False):
+def estimateGndLineCoeffs(filtered_vmap, stopP = 0.85, maxTrials=30,verbose = False,show_plots=False):
     gndImg = np.copy(filtered_vmap)
     nonzero = gndImg.nonzero()
     nonzeroy = np.array(nonzero[0])
@@ -131,13 +131,24 @@ class vboat_testing_node:
             print("[ERROR] vboat_node.py ---- Could not save image to file \'%s\'" % path)
             pass
 
-    def prefilter_vmap(self,_vmap, thresholds = [0.85,0.85,0.75,0.5], verbose=False, debug=False):
+    def filterVmap(self,_vmap, thresholds = [0.85,0.85,0.75,0.5], verbose=False, debug=False):
+        raw_vmap = np.copy(_vmap)
+        cv2.rectangle(raw_vmap,(0,0),(1, raw_vmap.shape[0]),(0,0,0), cv2.FILLED)
         vMax = np.max(_vmap)
         nThreshs = int(math.ceil((vMax/256.0)) * 4)
         if(debug): print("vMax, nThreshs" % (vMax, nThreshs))
 
+        # Rough Theshold top of vmap heavy prior
+        h, w = raw_vmap.shape[:2]
+        dh = h / 3
+        topV = raw_vmap[0:dh, :]
+        botV = raw_vmap[dh:h, :]
+        tmpThresh = int(np.max(topV)*0.9)
+        _,topV = cv2.threshold(topV, tmpThresh,255,cv2.THRESH_TOZERO)
+        preVmap = np.concatenate((topV,botV), axis=0)
+
         stripsPV = []
-        stripsV = strip_image(_vmap, nstrips=nThreshs, horizontal_strips=False)
+        stripsV = strip_image(preVmap, nstrips=nThreshs, horizontal_strips=False)
         for i, strip in enumerate(stripsV):
             tmpMax = np.max(strip)
             tmpMean = np.mean(strip)
@@ -161,56 +172,135 @@ class vboat_testing_node:
         filtV = np.concatenate(stripsPV, axis=1)
         return filtV, stripsV, stripsPV
 
-    def update(self):
-        img = np.copy(self.disparity)
-        # kernel = cv2.getStructuringElement(cv2.MORPH_RECT,(3,3))
-        # disparity = cv2.morphologyEx(img, cv2.MORPH_CLOSE, kernel)
-        raw_umap, raw_vmap, dt = self.vboat.get_uv_map(img)
-        self.umap = np.copy(raw_umap)
-        self.vmap = np.copy(raw_vmap)
+    def extractGndLine(self, slope, intercept, validSlopeThresh = 0.3, dslopeThresh = 2.0, dinterceptThresh = 300.0, interceptOffset = -15.0, verbose = False, debug = False):
+        if(self.prevM is None): self.prevM = slope
+        if(self.prevB is None): self.prevB = intercept
+        if(debug): print("Previous line coefficients = %.3f, %.3f" % (self.prevM,self.prevB))
+        h,w = self.vmap.shape[:2]
+        validGnd = False
 
-        cv2.rectangle(raw_vmap,(0,0),(1, raw_vmap.shape[0]),(0,0,0), cv2.FILLED)
-        ###########################################
-        filtV,_,_ = self.prefilter_vmap(raw_vmap)
-        m,b, xs,ys = groundSeg(filtV)
-        # m,b, xs,ys = get_linear_ground_mask(filtV)
-        ###########################################
-        color = cv2.cvtColor(raw_vmap,cv2.COLOR_GRAY2BGR)
-        ground_display = np.copy(color)
-        ground_display= cv2.applyColorMap(ground_display,cv2.COLORMAP_PARULA)
-        if(m >= 0.3):
-            # Filter out sudden jumps in segmented ground line
-            if(self.prevM is None): self.prevM = m
-            if(self.prevB is None): self.prevB = b
-            dSlope = math.fabs(self.prevM - m)
-            dB = math.fabs(self.prevB - b)
-            print("dSlope, dIntercept = %.3f, %.3f" % (dSlope,dB))
-            if((dSlope >= 2.0) or (dB >= 300.0)):
-                m = self.prevM
-                b = self.prevB
-            self.prevM = m
-            self.prevB = b
-            h,w = filtV.shape[:2]
-            yf = int(m*w + b)
-            pt1 = (0,int(b))
-            pt2 = (w,yf-15)
+        # Only return a ground line if estimated slope is steep enough (i.e. try to prevent flat lines)
+        if(slope >= validSlopeThresh):
+            # Check for significant schanges in segmented ground line
+            dSlope = math.fabs(self.prevM - slope)
+            dB = math.fabs(self.prevB - intercept)
+            if(debug): print("dSlope, dIntercept = %.3f, %.3f" % (dSlope,dB))
+            # Filter out sudden jumps in segmented ground line, if warrented
+            if((dSlope >= dslopeThresh) or (dB >= dinterceptThresh)):
+                newSlope, newIntercept = self.smoothUnstableGndLine((slope,intercept),(self.prevM,self.prevB))
+            else: newSlope = slope; newIntercept = intercept
+            # Store coefficients for next iteration
+            self.prevM = slope
+            self.prevB = intercept
+            # Extract ground line parameters
+            yf = int(newSlope*w + newIntercept);  pt1 = (0,int(newIntercept));  pt2 = (w,int(yf+interceptOffset))
+            # Create point array for removing anything below ground line (for removing noise)
             pts = np.array([(0, h),pt1,pt2,(w, h),(0, h)])
-            cv2.fillPoly(color, [pts], (0,0,0))
-            cv2.line(ground_display,pt1, pt2, (0,255,255),1)
+            validGnd = True
         else:
             self.prevM = None; self.prevB = None
-            print("No Ground Detected.")
+            pts = None
+            if(verbose): print("No Ground Detected.")
+        return validGnd, pts
 
-        vmap_mod = cv2.cvtColor(color,cv2.COLOR_BGR2GRAY)
-        return vmap_mod,ground_display
+    def smoothUnstableGndLine(self, curCoeffs, prevCoeffs, kds=(0.05,0.5), verbose=False, debug=True):
+        """ ----------------------
+                EXPERIMENTAL
+        -------------------------- """
+
+        if(debug): print("curM, prevM: %.3f, %.3f" % (curCoeffs[0], prevCoeffs[0]))
+        if(debug): print("curB, prevB: %.3f, %.3f" % (curCoeffs[1], prevCoeffs[1]))
+        errorM = prevCoeffs[0] - curCoeffs[0]
+        errorB = prevCoeffs[1] - curCoeffs[1]
+        if(debug): print("errorM = %.3f | errorB = %.3f" % (errorM, errorB))
+        dSlopes = math.fabs(curCoeffs[0] - prevCoeffs[0])
+        dIntercepts = math.fabs(curCoeffs[1] - prevCoeffs[1])
+        if(debug): print("dSlope = %.3f | dIntercept = %.3f" % (dSlopes, dIntercepts))
+
+        mDGain = dSlopes * kds[0]
+        bDGain = dIntercepts * kds[1]
+        if(debug): print("mDGain = %.3f | bDGain = %.3f" % (mDGain,bDGain))
+        newSlope = (prevCoeffs[0]) - mDGain
+        newIntercept = prevCoeffs[1] - bDGain
+        # newSlope = (errorM) - mDGain
+        # newIntercept = errorB - bDGain
+        if(debug):
+            print("newSlope = %.3f | newIntercept = %.3f" % (newSlope,newIntercept))
+            print("- ---------------------------------- -")
+        return newSlope, newIntercept
+
+    def removeGround(self, _vmap, _pts, debug_line_vis=True):
+        img = np.copy(_vmap)
+        if(len(img.shape)<3): color = cv2.cvtColor(img,cv2.COLOR_GRAY2BGR)
+        else: color = img
+
+        cv2.fillPoly(color, [_pts], (0,0,0))
+        if(debug_line_vis):
+            ground_display = np.copy(img)
+            if(len(ground_display.shape)>2): ground_display = cv2.cvtColor(ground_display,cv2.COLOR_BGR2GRAY)
+            ground_display = cv2.applyColorMap(ground_display,cv2.COLORMAP_PARULA)
+            cv2.line(ground_display,tuple(_pts[1]), tuple(_pts[2]), (0,255,255),1)
+        else: ground_display = img
+
+        if(len(color.shape)>2): vmapNoGnd = cv2.cvtColor(color,cv2.COLOR_BGR2GRAY)
+        else: vmapNoGnd = color
+
+        return vmapNoGnd, ground_display
+
+    def update(self):
+        if(self.flag_show_imgs):
+            cv2.namedWindow('overlay', cv2.WINDOW_NORMAL)
+            # cv2.namedWindow('disparity', cv2.WINDOW_NORMAL)
+            cv2.namedWindow('ground_line', cv2.WINDOW_NORMAL)
+
+        try:
+            img = np.copy(self.disparity)
+            raw_umap, raw_vmap, _ = self.vboat.get_uv_map(img)
+            self.umap = np.copy(raw_umap)
+            self.vmap = np.copy(raw_vmap)
+        except:
+            print("[WARNING] Failed to get UV Maps")
+            pass
+
+        try: vmapFiltered,_,_ = self.filterVmap(raw_vmap,[0.65,0.85,0.35,0.5])
+        except:
+            print("[WARNING] Failed to get Filter V-Map")
+            pass
+
+        try: m,b, xs,ys = estimateGndLineCoeffs(vmapFiltered)
+        except:
+            print("[WARNING] Failed estimateGndLineCoeffs")
+            pass
+
+        try: validGnd, pts = self.extractGndLine(m,b)
+        except:
+            print("[WARNING] Failed to extract Ground line")
+            pass
+
+        try:
+            if(validGnd): vmapNoGnd, vizGndLine = self.removeGround(raw_vmap,pts)
+            else:
+                vizGndLine = np.copy(vmapFiltered)
+                if(len(vizGndLine.shape)>2): vizGndLine = cv2.cvtColor(vizGndLine,cv2.COLOR_BGR2GRAY)
+                vizGndLine = cv2.applyColorMap(vizGndLine,cv2.COLORMAP_PARULA)
+        except:
+            print("[WARNING] Failed to remove Ground line")
+            pass
+
+        if(self.flag_show_imgs):
+            try:
+                overlay = make_uv_overlay(cv2.cvtColor(self.disparity,cv2.COLOR_GRAY2BGR),self.umap,vmapFiltered)
+                cv2.imshow('overlay', overlay)
+            except:
+                print("[WARNING] Failed to create Overlay")
+                pass
+            # cv2.imshow('disparity', self.disparity)
+            cv2.imshow('ground_line', vizGndLine)
+
 
     def start(self):
         dt = 0
         count = 0
-        if(self.flag_show_imgs):
-            cv2.namedWindow('overlay', cv2.WINDOW_NORMAL)
-            cv2.namedWindow('disparity', cv2.WINDOW_NORMAL)
-            cv2.namedWindow('ground_line', cv2.WINDOW_NORMAL)
         while not rospy.is_shutdown():
             key = cv2.waitKey(5) & 0xFF
             if key == ord('q'): break
@@ -219,9 +309,9 @@ class vboat_testing_node:
                 if((rgb is None) or (depth is None)): continue
 
                 t0 = time.time()
-
                 self.camCallback(rgb, depth)
-                vmapMod,gndLine = self.update()
+                self.update()
+
                 # self.vboat.pipelineTest(self.img, threshU1=0.25, threshU2=0.1, threshV1=5, threshV2=70, timing=True)
 
                 t1 = time.time()
@@ -231,12 +321,6 @@ class vboat_testing_node:
                 # time = rospy.Time.now()
                 # try: self.image_pub.publish(self.bridge.cv2_to_imgmsg(display_obstacles, "bgr8"))
                 # except CvBridgeError as e: print(e)
-
-                if(self.flag_show_imgs):
-                    overlay = make_uv_overlay(self.rgb,self.umap,vmapMod)
-                    cv2.imshow('overlay', overlay)
-                    cv2.imshow('disparity', self.disparity)
-                    cv2.imshow('ground_line', gndLine)
 
                 if self.flag_save_imgs:
                     img_suffix = "frame_" + str(count) + ".png"

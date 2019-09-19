@@ -30,12 +30,14 @@ def make_uv_overlay(_img, umap, vmap,border_width=2,color_uvmaps=True):
     # numap = cv2.applyColorMap(umap,cv2.COLORMAP_JET)
     # nvmap = cv2.applyColorMap(vmap,cv2.COLORMAP_JET)
     if color_uvmaps:
-        # try: umap = cv2.cvtColor(umap,cv2.COLOR_BGR2GRAY)
-        # except: pass
-        # try: vmap = cv2.cvtColor(vmap,cv2.COLOR_BGR2GRAY)
-        # except: pass
-        numap = cv2.applyColorMap(umap,cv2.COLORMAP_PARULA)
-        nvmap = cv2.applyColorMap(vmap,cv2.COLORMAP_PARULA)
+        if(len(umap.shape) < 3):
+            # umap = cv2.cvtColor(umap,cv2.COLOR_BGR2GRAY)
+            numap = cv2.applyColorMap(umap,cv2.COLORMAP_PARULA)
+        else: numap = umap
+        if(len(vmap.shape) < 3):
+            # vmap = cv2.cvtColor(vmap,cv2.COLOR_BGR2GRAY)
+            nvmap = cv2.applyColorMap(vmap,cv2.COLORMAP_PARULA)
+        else: nvmap = vmap
     else:
         numap = umap
         nvmap = vmap
