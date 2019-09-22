@@ -15,6 +15,8 @@ from img_utils import *
 
 def make_uv_overlay(_img, umap, vmap,border_width=2,color_uvmaps=True):
     img = np.copy(_img)
+    if(len(img.shape) < 3):
+        img = cv2.applyColorMap(img,cv2.COLORMAP_PARULA)
     # try: img = cv2.cvtColor(img,cv2.COLOR_GRAY2BGR)
     # except: pass
     blank = np.ones((umap.shape[0],vmap.shape[1],3),np.uint8)*255
