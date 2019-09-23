@@ -4,7 +4,7 @@ import cv2
 import rospy
 import numpy as np
 import os, csv, time, math
-from sklearn import linear_model
+# from sklearn import linear_model
 from matplotlib import pyplot as plt
 
 from sensor_msgs.msg import Image,CompressedImage
@@ -72,35 +72,35 @@ def show_hough_line(img, accumulator, thetas, rhos, save_path=None):
     if save_path is not None: plt.savefig(save_path, bbox_inches='tight')
     plt.show()
 
-def estimateGndLineCoeffs(filtered_vmap, stopP = 0.85, maxTrials=30,verbose = False,show_plots=False):
-    gndImg = np.copy(filtered_vmap)
-    nonzero = gndImg.nonzero()
-    nonzeroy = np.array(nonzero[0])
-    nonzerox = np.array(nonzero[1])
-    nonzerox = np.reshape(nonzerox,(nonzerox.shape[0],1))
-
-    ransac = linear_model.RANSACRegressor(stop_probability=stopP,max_trials=maxTrials)
-    ransac.fit(nonzerox, nonzeroy)
-    inlier_mask = ransac.inlier_mask_
-    outlier_mask = np.logical_not(inlier_mask)
-
-    line_X = np.arange(nonzerox.min(), nonzerox.max())[:, np.newaxis]
-    line_y_ransac = ransac.predict(line_X)
-
-    if(show_plots):
-        plt.figure("RANSAC")
-        plt.clf()
-        plt.subplots_adjust(wspace=0.0,hspace=0.0,left=0.0,right=1.0,top=1.0, bottom=0.0)
-        plt.axis([0.0, 255.0, 480, 0])
-        plt.imshow(gndImg,interpolation='bilinear')
-        plt.scatter(nonzerox,nonzeroy, color='yellowgreen', marker='.',label='Inliers')
-        plt.plot(line_X, line_y_ransac, color='red', linewidth=2, label='RANSAC regressor')
-        plt.show()
-
-    m = ransac.estimator_.coef_
-    b = ransac.estimator_.intercept_
-    if(verbose): print("Estimated coefficients (RANSAC): m = %.3f | b = %.3f" % (m,b))
-    return m,b, line_X,line_y_ransac
+# def estimateGndLineCoeffs(filtered_vmap, stopP = 0.85, maxTrials=30,verbose = False,show_plots=False):
+#     gndImg = np.copy(filtered_vmap)
+#     nonzero = gndImg.nonzero()
+#     nonzeroy = np.array(nonzero[0])
+#     nonzerox = np.array(nonzero[1])
+#     nonzerox = np.reshape(nonzerox,(nonzerox.shape[0],1))
+#
+#     ransac = linear_model.RANSACRegressor(stop_probability=stopP,max_trials=maxTrials)
+#     ransac.fit(nonzerox, nonzeroy)
+#     inlier_mask = ransac.inlier_mask_
+#     outlier_mask = np.logical_not(inlier_mask)
+#
+#     line_X = np.arange(nonzerox.min(), nonzerox.max())[:, np.newaxis]
+#     line_y_ransac = ransac.predict(line_X)
+#
+#     if(show_plots):
+#         plt.figure("RANSAC")
+#         plt.clf()
+#         plt.subplots_adjust(wspace=0.0,hspace=0.0,left=0.0,right=1.0,top=1.0, bottom=0.0)
+#         plt.axis([0.0, 255.0, 480, 0])
+#         plt.imshow(gndImg,interpolation='bilinear')
+#         plt.scatter(nonzerox,nonzeroy, color='yellowgreen', marker='.',label='Inliers')
+#         plt.plot(line_X, line_y_ransac, color='red', linewidth=2, label='RANSAC regressor')
+#         plt.show()
+#
+#     m = ransac.estimator_.coef_
+#     b = ransac.estimator_.intercept_
+#     if(verbose): print("Estimated coefficients (RANSAC): m = %.3f | b = %.3f" % (m,b))
+#     return m,b, line_X,line_y_ransac
 
 def isGndPresent(found_lines,minDeg=-89.0, maxDeg=-26.0):
     cnt = 0
