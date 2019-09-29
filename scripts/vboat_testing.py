@@ -2,6 +2,7 @@
 
 import cv2
 import rospy
+import cython
 import numpy as np
 import os, csv, time, math
 # from sklearn import linear_model
@@ -14,7 +15,6 @@ from VBOATS import VBOATS
 from devices.d415_camera import *
 from hyutils.img_utils import *
 from hyutils.uv_mapping_utils import *
-import cython
 
 # @cython.boundscheck(False)
 # cpdef unsigned char[:, :] hough_line_fast(unsigned char [:, :]accumulator,long [:] x_idxs,long [:]y_idxs, double [:] cos_t,double [:] sin_t, long diag_len,long num_thetas):
@@ -211,7 +211,8 @@ class vboat_testing_node:
 
         self.intr = self.cam.get_intrinsics()
         self.extr = self.cam.get_extrinsics()
-        self.focal = self.intr["depth"].fx
+        self.focal = [self.intr["depth"].fx, self.intr["depth"].fy]
+        self.ppoint = [self.intr["depth"].ppx, self.intr["depth"].ppy]
         self.baseline = self.extr.translation[0]
 
         self.vboat = VBOATS()
@@ -252,7 +253,7 @@ class vboat_testing_node:
         tmp2 = _depth*0.001
         loc = np.where(tmp2 == 0.0)
         tmp2[loc] = 1.0
-        disparity = (self.focal*self.baseline)/tmp2
+        disparity = (self.focal[0]*self.baseline)/tmp2
         disparity[loc] = 0.0
         self.disparity2uintGain = (255)/np.max(disparity)
         disparity = np.uint8(disparity*self.disparity2uintGain)
@@ -581,6 +582,79 @@ class vboat_testing_node:
             print("\t[INFO] find_obstacles() --- Took %f seconds (%.2f Hz) to complete" % (dt, 1/dt))
         return obs, obsUmap, ybounds, dBounds, windows, len(obs)
 
+    def calculate_distance(self, umap, xs, ds, ys, dsbuffer=1,
+        use_principle_point=True, use_disparity_buffer=False, verbose=False):
+
+        # focal=[462.138,462.138],
+        # baseline=0.055
+        # dscale=0.001
+        # pp=[320.551,232.202]
+
+        nonzero = umap.nonzero()
+        nonzeroy = np.array(nonzero[0])
+        nonzerox = np.array(nonzero[1])
+
+        if(use_disparity_buffer): ds[0] = ds[0] - dsbuffer
+
+        good_inds = ((nonzeroy >= ds[0]) & (nonzeroy < ds[1]) &
+                     (nonzerox >= xs[0]) &  (nonzerox < xs[1])).nonzero()[0]
+
+        xmean = np.int(np.mean(nonzerox[good_inds]))
+        dmean = np.mean(nonzeroy[good_inds])
+        ymean = np.mean(ys)
+        # zgain = 1.0/(self.cam.dscale)#*(65535.0/255.0)
+        zgain = 1.0/(self.disparity2uintGain*self.cam.dscale*1.35)
+        z = 1.0/dmean
+        # z = dmean*(self.focal[0]*self.baseline)
+        # z = (self.focal[0]*self.baseline)/dmean
+        # z = (462.138*self.baseline)/dmean
+        z = z * zgain
+
+        if use_principle_point:
+            px = self.ppoint[0]
+            py = self.ppoint[1]
+        else: px = py = 0
+
+        x = ((xmean - px)/self.focal[0])*z
+        y = ((ymean - py)/self.focal[1])*z
+        dist = np.sqrt(x*x+z*z)
+
+        if(verbose): print("X, Y, Z: %.3f, %.3f, %.3f" % (x,y, dist))
+        return dist,x,y,z
+
+    def extract_obstacle_information(self, umap, xBounds, dBounds, obstacles, verbose=True):
+        distances = [];  angles = []
+        xs = xBounds
+        ds = np.array(dBounds)
+        obs = obstacles
+        nObs = len(ds)
+        nObsNew = 0
+        if verbose: print("[INFO] VBOATS.py --- %d Obstacles Found" % (nObs))
+        if(nObs is not 0):
+            for i in range(nObs):
+                disparities = ds[i]
+                us = [obs[i][0][0], obs[i][1][0]]
+                vs = [obs[i][0][1], obs[i][1][1]]
+                z,ux,uy,uz = self.calculate_distance(umap,us,disparities,vs)
+
+                theta = math.atan2(ux,uz)
+                theta = np.nan_to_num(theta)
+                # if verbose: print("\tObstacle [%d] Distance, Angle: %.3f, %.3f" % (i,z,np.rad2deg(theta)))
+
+                if(z > 0.05):
+                    distances.append(z)
+                    angles.append(theta)
+                    nObsNew+=1
+                    if verbose: print("\tObstacle [%d] Distance, Angle: %.3f, %.3f" % (i,z,np.rad2deg(theta)))
+        else:
+            distances.append(-1)
+            angles.append(0)
+        if(nObsNew == 0):
+            distances.append(-1)
+            angles.append(0)
+
+        return distances,angles
+
     def update(self):
         nObs = 0
         lineParams = None
@@ -668,6 +742,12 @@ class vboat_testing_node:
             # pplot(dispO,"Obstacles")
         except:
             print("[WARNING] Failed obstacle detection")
+            pass
+
+        try:
+            distances, angles = self.extract_obstacle_information(raw_umap, xLims, dbounds, obs)
+        except:
+            print("[WARNING] Failed obstacle extraction")
             pass
 
         # try:
