@@ -1,14 +1,14 @@
 #!/usr/bin/env python
 
 import cv2
-import rospy
+import rospy, tf
 import cython
 import numpy as np
 import os, csv, time, math
 # from sklearn import linear_model
 from matplotlib import pyplot as plt
 
-from sensor_msgs.msg import Image,CompressedImage
+from sensor_msgs.msg import Image,CameraInfo,CompressedImage
 from cv_bridge import CvBridge, CvBridgeError
 
 from VBOATS import VBOATS
@@ -193,33 +193,69 @@ class vboat_testing_node:
         rootDir = os.path.dirname(os.path.abspath(__file__))
         imgsPath = os.path.abspath(os.path.join(rootDir, "..")) + "/images"
 
-        self.fps = rospy.get_param('~fps', 30)
+        self.ns = rospy.get_namespace()
+        self.fps = rospy.get_param('~fps', 60)
         self.save_path = rospy.get_param('~save_path',imgsPath)
-        self.flag_save_imgs = rospy.get_param('~flag_save_imgs', True)
+        self.flag_save_imgs = rospy.get_param('~flag_save_imgs', False)
         self.flag_show_imgs = rospy.get_param('~flag_show_imgs', True)
+        self.cam_name = rospy.get_param('~camera_name',"d415")
+        self.do_update = rospy.get_param('~do_update',False)
 
-        self.cam_tf = rospy.get_param('~cam_tf', "d415_camera_depth_optical_frame")
-        self.image_topic = rospy.get_param('~image_topic', "d415/depth/image_raw")
+        self.base_tf_frame = rospy.get_param('~base_tf_frame', "base_link")
+        self.cam_base_tf_frame = rospy.get_param('~cam_base_tf_frame', self.cam_name+"/rgb_base_frame")
+        self.cam_tf_frame = rospy.get_param('~cam_tf_frame', self.cam_name+"/rgb_optical_frame")
+        self.image_topic = rospy.get_param('~image_topic', self.ns+self.cam_name+"/depth/image_raw")
+        self.image_topic_rgb = rospy.get_param('~rgb_image_topic', self.ns+self.cam_name+"/rgb/image_raw")
+        self.camera_info_topic = rospy.get_param('~camera_info_topic', self.ns+self.cam_name+"/rgb/camera_info")
+
+        # self.cam_tf = rospy.get_param('~cam_tf', "d415_camera_depth_optical_frame")
+        # self.image_topic = rospy.get_param('~image_topic', "d415/depth/image_raw")
 
         # self.dist_pub = rospy.Publisher(rospy.get_namespace()+"/obstacles/distances",FloatArrayStamped,queue_size=1000)
         # self.ang_pub = rospy.Publisher(rospy.get_namespace()+"/obstacles/angles",FloatArrayStamped,queue_size=1000)
 
-        self.image_pub = rospy.Publisher("vboat/image",Image,queue_size=1000)
+        # self.image_pub = rospy.Publisher("vboat/image",Image,queue_size=1000)
+        self.rgb_pub = rospy.Publisher(self.image_topic_rgb,Image,queue_size=100)
+        self.pub_info = rospy.Publisher(self.camera_info_topic,CameraInfo,queue_size=100)
+        self.depth_pub = rospy.Publisher(self.image_topic,Image,queue_size=100)
+
         self.bridge = CvBridge()
+        self.br = tf.TransformBroadcaster()
 
         self.cam = CameraD415(flag_save=False,use_statistics=False,fps=30, verbose=True)
 
         self.intr = self.cam.get_intrinsics()
         self.extr = self.cam.get_extrinsics()
-        self.focal = [self.intr["depth"].fx, self.intr["depth"].fy]
-        self.ppoint = [self.intr["depth"].ppx, self.intr["depth"].ppy]
+
+        fx = self.intr["depth"].fx
+        fy = self.intr["depth"].fy
+        ppx = self.intr['depth'].ppx
+        ppy = self.intr['depth'].ppy
+
+        self.focal = [fx, fy]
+        self.ppoint = [ppx, ppy]
         self.baseline = self.extr.translation[0]
+
+        self.info_msg = CameraInfo()
+        self.info_msg.width = self.intr['depth'].width
+        self.info_msg.height = self.intr['depth'].height
+        self.info_msg.K = [fx, 0, ppx,
+                           0, fy, ppy,
+                           0, 0, 1]
+
+        self.info_msg.D = [0, 0, 0, 0]
+
+        self.info_msg.P = [fx, 0, ppx, 0,
+                           0, fy, ppy, 0,
+                           0, 0, 1, 0]
+
+
 
         self.vboat = VBOATS()
         self.vboat.dead_x = 3
         self.vboat.dead_y = 3
 
-        self.r = rospy.Rate(60)
+        self.r = rospy.Rate(self.fps)
         self.rgb = []
         self.depth = []
         self.disparity = []
@@ -245,23 +281,46 @@ class vboat_testing_node:
         print("[INFO] vboat_testing_node --- Started...")
 
     def camCallback(self, _rgb, _depth):
-        tmp = _depth/65535.0
-        ratio = np.max(_depth)/65535.0
-        depth = np.uint8(tmp*255)
-        depth = cv2.cvtColor(depth,cv2.COLOR_GRAY2BGR)
+        # tmp = _depth/65535.0
+        # ratio = np.max(_depth)/65535.0
+        # depth = np.uint8(tmp*255)
+        # depthcolor = cv2.cvtColor(depth,cv2.COLOR_GRAY2BGR)
 
-        tmp2 = _depth*0.001
-        loc = np.where(tmp2 == 0.0)
-        tmp2[loc] = 1.0
-        disparity = (self.focal[0]*self.baseline)/tmp2
-        disparity[loc] = 0.0
-        self.disparity2uintGain = (255)/np.max(disparity)
-        disparity = np.uint8(disparity*self.disparity2uintGain)
+        # tmp2 = _depth*0.001
+        # loc = np.where(tmp2 == 0.0)
+        # tmp2[loc] = 1.0
+        # disparity = (self.focal[0]*self.baseline)/tmp2
+        # disparity[loc] = 0.0
+        # self.disparity2uintGain = (255)/np.max(disparity)
+        # disparity = np.uint8(disparity*self.disparity2uintGain)
 
-        self.rgb = np.copy(_rgb)
-        self.depth = np.copy(depth)
-        self.disparity = np.copy(disparity)
+        # self.rgb = np.copy(_rgb)
+        # self.depth = np.copy(depth)
+        # self.disparity = np.copy(disparity)
+
+        # self.depth_pub.publish(self.bridge.cv2_to_imgmsg(depth, "8UC1"))
+        self.depth_pub.publish(self.bridge.cv2_to_imgmsg(_depth, "32FC1"))
+
+        try:
+            # msg = self.create_camera_info_msg()
+            self.rgb_pub.publish(self.bridge.cv2_to_imgmsg(_rgb, "bgr8"))
+            # msg.header.stamp = self.bridge.cv2_to_imgmsg(_rgb, "bgr8").header.stamp
+            # self.pub_info.publish(msg)
+        except CvBridgeError as e:
+            print(e)
+
         self.camcount+=1
+
+    def create_camera_info_msg(self):
+        self.info_msg.header.stamp = rospy.Time.now()
+        self.info_msg.header.seq = self.count
+        self.info_msg.header.frame_id = self.cam_tf_frame
+
+        self.br.sendTransform((0, 0, 0), tf.transformations.quaternion_from_euler(-(np.pi/2.0), 0, (np.pi/2.0)), rospy.Time.now(), self.cam_tf_frame,self.cam_base_tf_frame)
+
+        # self.br.sendTransform((0.21,0.0,0.02), tf.transformations.quaternion_from_euler(0, 0, np.pi), rospy.Time.now(), self.cam_base_tf_frame,self.base_tf_frame)
+        self.br.sendTransform((0.0,0.0,0.0), tf.transformations.quaternion_from_euler(0, 0, np.pi), rospy.Time.now(), self.cam_base_tf_frame,self.base_tf_frame)
+        return self.info_msg
 
     def draw_obstacle_image(self):
         display_obstacles = cv2.cvtColor(self.vboat.img, cv2.COLOR_GRAY2BGR)
@@ -665,8 +724,8 @@ class vboat_testing_node:
             # cv2.namedWindow('filtered_vmap', cv2.WINDOW_NORMAL)
 
         try:
-            img = np.copy(self.disparity)
-            raw_umap, raw_vmap, _ = self.vboat.get_uv_map(img)
+            # img = np.copy(self.disparity)
+            raw_umap, raw_vmap, _ = self.vboat.get_uv_map(self.disparity)
             cv2.rectangle(raw_vmap,(0,0),(3, raw_vmap.shape[0]),(0,0,0), cv2.FILLED)
             cv2.rectangle(raw_umap,(0,0),(raw_umap.shape[1], 3),(0,0,0), cv2.FILLED)
             self.umap = np.copy(raw_umap)
@@ -801,44 +860,45 @@ class vboat_testing_node:
         dt = 0
         count = savecnt = 0
         while not rospy.is_shutdown():
-            key = cv2.waitKey(5) & 0xFF
-            if key == ord('q'): break
+            # key = cv2.waitKey(5) & 0xFF
+            # if key == ord('q'): break
             try:
                 rgb, depth = self.cam.read()
                 if((rgb is None) or (depth is None)): continue
 
-                t0 = time.time()
+                # t0 = time.time()
                 self.camCallback(rgb, depth)
-                nObs = self.update()
+                # if(self.do_update): nObs = self.update()
 
                 # self.vboat.pipelineV1(self.img, timing=True)
 
-                t1 = time.time()
-                dt = t1 - t0
-                print("[INFO] vboat_testing_node::loop() --- Found %d Obstacles in %f seconds (%.2f Hz)" % (nObs,dt, 1/dt))
+                # t1 = time.time()
+                # dt = t1 - t0
+                # print("[INFO] vboat_testing_node::loop() --- Found %d Obstacles in %f seconds (%.2f Hz)" % (nObs,dt, 1/dt))
 
                 # time = rospy.Time.now()
                 # try: self.image_pub.publish(self.bridge.cv2_to_imgmsg(display_obstacles, "bgr8"))
                 # except CvBridgeError as e: print(e)
-                if self.flag_save_imgs:
-                    if(key == ord('s')):
-                        img_suffix = "frame_" + str(savecnt) + ".png"
-                        if self.rgb is not None:
-                            rgb_file = "rgb_" + img_suffix
-                            rgb_path = os.path.join(self.rgbDir,rgb_file)
-                            self.save_image_to_file(self.rgb,rgb_path)
-                        if self.disparity is not None:
-                            depth_file = "depth_" + img_suffix
-                            depth_path = os.path.join(self.depthDir,depth_file)
-                            self.save_image_to_file(self.disparity,depth_path)
-
-                            # obs_file = "obstacle_" + img_suffix
-                            # obs_path = os.path.join(self.obsDir,obs_file)
-                            # self.save_image_to_file(display_obstacles,obs_path)
-                        savecnt += 1
+                # if self.flag_save_imgs:
+                #     if(key == ord('s')):
+                #         img_suffix = "frame_" + str(savecnt) + ".png"
+                #         if self.rgb is not None:
+                #             rgb_file = "rgb_" + img_suffix
+                #             rgb_path = os.path.join(self.rgbDir,rgb_file)
+                #             self.save_image_to_file(self.rgb,rgb_path)
+                #         if self.disparity is not None:
+                #             depth_file = "depth_" + img_suffix
+                #             depth_path = os.path.join(self.depthDir,depth_file)
+                #             self.save_image_to_file(self.disparity,depth_path)
+                #
+                #             # obs_file = "obstacle_" + img_suffix
+                #             # obs_path = os.path.join(self.obsDir,obs_file)
+                #             # self.save_image_to_file(display_obstacles,obs_path)
+                #         savecnt += 1
                 count+=1
+                self.count+=1
             except: pass
-            self.r.sleep()
+            # self.r.sleep()
 
 if __name__ == "__main__" :
     vnode = vboat_testing_node()

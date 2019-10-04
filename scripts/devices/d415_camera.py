@@ -8,6 +8,8 @@ pp = pprint.PrettyPrinter(indent=4)
 class CameraD415(object):
     def __init__(self, flag_save=False,use_statistics=False, fps=60,depth_resolution=(640,480),rgb_resolution=(640,480),verbose=False):
         self.fps = fps
+        self.depth_resolution = depth_resolution
+        self.rgb_resolution = rgb_resolution
         self.flag_save = flag_save
         self.frames = None
         self.writerD = None
@@ -22,8 +24,8 @@ class CameraD415(object):
         self.dev = ctx.devices[0]
         print("[INFO] CameraD415() -- Resetting Hardware...")
         self.dev.hardware_reset()
-        time.sleep(2)
-        is_success = self.hardware_startup()
+        time.sleep(5)
+        is_success = self.hardware_startup(fps=self.fps,depth_resolution=self.depth_resolution,rgb_resolution=self.rgb_resolution)
         if not is_success:
             is_success = self.reset()
             if not is_success:
@@ -48,7 +50,7 @@ class CameraD415(object):
     def reset(self):
         print("[INFO] CameraD415() -- Resetting Camera...")
         self.dev.hardware_reset()
-        is_success = self.hardware_startup()
+        is_success = self.hardware_startup(fps=self.fps,depth_resolution=self.depth_resolution,rgb_resolution=self.rgb_resolution)
         return is_success
 
     def hardware_startup(self,fps=60,depth_resolution=(640,480),rgb_resolution=(640,480)):
@@ -103,13 +105,16 @@ class CameraD415(object):
         return depth_scale
 
     def read(self):
-        if(self.pipeline.poll_for_frames()):
-            self.frames = self.pipeline.wait_for_frames()
-            rgb = self.get_rgb_image()
-            depth = self.get_depth_image()
-        else:
-            rgb = None
-            depth = None
+        self.frames = self.pipeline.wait_for_frames()
+        rgb = self.get_rgb_image()
+        depth = self.get_depth_image()
+        # if(self.pipeline.poll_for_frames()):
+        #     self.frames = self.pipeline.wait_for_frames()
+        #    rgb = self.get_rgb_image()
+        #    depth = self.get_depth_image()
+        # else:
+        #     rgb = None
+        #     depth = None
         return rgb, depth
 
     def get_rgb_image(self):

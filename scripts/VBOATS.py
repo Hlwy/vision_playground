@@ -1,3 +1,4 @@
+# -*- coding: UTF-8 -*-
 import numpy as np
 import os, sys, cv2, time, math
 from matplotlib import pyplot as plt
@@ -75,6 +76,7 @@ class VBOATS:
         self.debug_contours = False
         self.debug_windows = False
         self.debug_obstacle_search = False
+
     def get_uv_map(self, img, verbose=False, timing=False):
         """ ===================================================================
         Create the UV Disparity Mappings from a given depth (disparity) image
@@ -157,6 +159,13 @@ class VBOATS:
             print("\t[INFO] get_uv_map_test() --- Took %f seconds (%.2f Hz) to complete" % (dt, 1/dt))
 
         return umap,vmap, dt
+
+    #  ██████  ██████  ███████ ████████  █████   ██████ ██      ███████ ███████
+    # ██    ██ ██   ██ ██         ██    ██   ██ ██      ██      ██      ██
+    # ██    ██ ██████  ███████    ██    ███████ ██      ██      █████   ███████
+    # ██    ██ ██   ██      ██    ██    ██   ██ ██      ██      ██           ██
+    #  ██████  ██████  ███████    ██    ██   ██  ██████ ███████ ███████ ███████
+
     def extract_contour_bounds(self, cnts, verbose=False, timing=False):
         """ ===================================================================
         	Attempt to find the horizontal bounds for detected contours
@@ -357,6 +366,157 @@ class VBOATS:
             print("\t[obstacle_search] --- Took %f seconds to complete" % (dt))
 
         return yLims, windows, dt
+
+    def find_obstacles_disparity(self, vmap, dLims, xLims, search_thresholds = (3,30), ground_detected=True, lineCoeffs=None, verbose=False,timing=False):
+        obs = []; obsUmap = []; windows = []; ybounds = []; dBounds = []
+        nObs = len(dLims)
+
+        if(timing): t0 = time.time()
+
+        for i in range(nObs):
+            xs = xLims[i]
+            ds = dLims[i]
+            ys,ws,_ = self.obstacle_search_disparity(vmap, ds, search_thresholds, lineCoeffs=lineCoeffs, verbose=verbose)
+            # if self.debug_obstacle_search: print("Y Limits[",len(ys),"]: ", ys)
+            if(len(ys) <= 2 and ground_detected):
+                if(verbose): print("[INFO] Found obstacle with zero height. Skipping...")
+            elif(len(ys) <= 1):
+                if(verbose): print("[INFO] Found obstacle with zero height. Skipping...")
+            elif(ys[0] == ys[1]):
+                if(verbose): print("[INFO] Found obstacle with zero height. Skipping...")
+            else:
+                ybounds.append(ys)
+                obs.append([
+                    (xs[0],ys[0]),
+                    (xs[1],ys[-1])
+                ])
+                obsUmap.append([
+                    (xs[0],ds[0]),
+                    (xs[1],ds[1])
+                ])
+                windows.append(ws)
+                dBounds.append(ds)
+
+        if(timing):
+            t1 = time.time()
+            dt = t1 - t0
+            print("\t[INFO] find_obstacles_disparity() --- Took %f seconds (%.2f Hz) to complete" % (dt, 1/dt))
+        return obs, obsUmap, ybounds, dBounds, windows, len(obs)
+    def obstacle_search_disparity(self, _vmap, x_limits, pixel_thresholds=(1,30), window_size=None, lineCoeffs=None, verbose=False, timing=False):
+        flag_done = False
+        try_last_search = False
+        tried_last_resort = False
+        flag_found_start = False
+        flag_hit_limits = False
+        count = 0; nWindows = 0; dt = 0
+        yLims = []; windows = []
+
+        try: img = cv2.cvtColor(_vmap,cv2.COLOR_GRAY2BGR)
+        except:
+            img = np.copy(_vmap)
+            print("[WARNING] obstacle_search_disparity ------------  Unnecessary Image Color Converting")
+        # Limits
+        h,w = img.shape[:2]
+        xmin, xmax = x_limits
+        pxlMin, pxlMax = pixel_thresholds
+        # Starting Pixel Coordinate
+        yk = prev_yk = 0
+        xk = (xmax + xmin) / 2
+
+        if(lineCoeffs is not None): yf = int(xk * lineCoeffs[0] + lineCoeffs[1])
+        else: yf = h
+
+        # Window Size
+        if(window_size is None):
+            dWy = 10
+            dWx = abs(xk - xmin)
+            if(dWx <= 2):
+                if xk <= 5: dWx = 1
+                else:  dWx = 2
+        else: dWx, dWy = np.int32(window_size)/2
+
+        if(yk <= 0): yk = 0 + dWy
+        if(verbose): print("Object Search Window [%d x %d] -- Starting Location (%d, %d)" % (dWx,dWy,xk, yk) )
+
+        if(timing): t0 = time.time()
+
+        # Grab all nonzero pixels
+        nonzero = img.nonzero()
+        nonzeroy = np.array(nonzero[0])
+        nonzerox = np.array(nonzero[1])
+
+        # Begin Sliding Window Search Technique
+        while(not flag_done):
+            if(xk >= w): # If we are at image edges we must stop
+                flag_hit_limits = True
+                if(verbose): print("[INFO] Reached max image width.")
+            if((yk >= yf) and (lineCoeffs is not None)):
+                flag_hit_limits = True
+                if(verbose): print("[INFO] Reached Estimated Ground line.")
+            elif(yk + dWy >= h):
+                flag_hit_limits = True
+                if(verbose): print("[INFO] Reached max image height.")
+
+            if(flag_hit_limits): flag_done = True
+
+            # Slide window from previousy found center (Clip at image edges)
+            # Update vertical [Y] window edges
+            if(yk - dWy >= 0): wy_low = yk - dWy
+            else: wy_low = 0
+
+            if(yk + dWy <= h): wy_high = yk + dWy
+            else: wy_high = h
+
+            # Update horizontal [X] window edges
+            if(xk - dWx >= 0): wx_low = xk - dWx
+            else: wx_low = 0
+
+            if(xk + dWx <= w): wx_high = xk + dWx
+            else: wx_high = w
+
+            # Identify the nonzero pixels in x and y within the window
+            good_inds = ((nonzeroy >= wy_low) & (nonzeroy < wy_high) &
+                        (nonzerox >= wx_low) &  (nonzerox < wx_high)).nonzero()[0]
+            nPxls = len(good_inds)
+            if(verbose):
+                print("Current Window [" + str(count) + "] ----- Center: " + str(xk) + ", " + str(yk) + " ----- # of good pixels = "  + str(nPxls))
+
+            # Record mean coordinates of pixels in window and update new window center
+            if(nPxls >= pxlMax):
+                if(nWindows == 0):
+                    yLims.append(yk - dWy)
+                    if flag_hit_limits:
+                        flag_done = False
+                        if(verbose): print("\tTrying Last Ditch Search...")
+                else:
+                    yLims.append(yk)
+                    try_last_search = False
+                windows.append([(wx_low,wy_high),(wx_high,wy_low)])
+                nWindows += 1
+                prev_yk = yk
+                flag_found_start = True
+            elif(nPxls <= pxlMin and flag_found_start):
+                flag_done = True
+                yLims.append(prev_yk + dWy)
+
+            # Update New window center coordinates
+            xk = xk
+            yk = yk + 2*dWy
+            count += 1
+
+        if(verbose): print("[%d] Good Windows" % nWindows)
+        if(timing):
+            t1 = time.time()
+            dt = t1 - t0
+            print("\t[obstacle_search_disparity] --- Took %f seconds to complete" % (dt))
+        return yLims, windows, dt
+
+    #  ██████  ██████   ██████  ██    ██ ███    ██ ██████
+    # ██       ██   ██ ██    ██ ██    ██ ████   ██ ██   ██
+    # ██   ███ ██████  ██    ██ ██    ██ ██ ██  ██ ██   ██
+    # ██    ██ ██   ██ ██    ██ ██    ██ ██  ██ ██ ██   ██
+    #  ██████  ██   ██  ██████   ██████  ██   ████ ██████
+
     def get_vmap_mask(self, vmap, threshold=20, min_ground_pixels=6, shift_gain=2, dxmean_thresh=1.0, max_extensions=3, extension = 4, maxStep=14, deltas=(0,20), mask_size = [10,30], window_size = [10,30], draw_method=1, verbose=False, timing=False):
         """
         ============================================================================
@@ -510,6 +670,64 @@ class VBOATS:
             dt = t1 - t0
             print("\t[INFO] get_vmap_mask() --- Took %f seconds (%.2f Hz) to complete" % (dt, 1/dt))
         return ground_detected, mask, mask_inv, mean_pxls, windows, dt
+
+    def is_gnd_present_disparity(self,found_lines,minDeg=-89.0, maxDeg=-26.0):
+        flag = False
+        avgTheta = 0.0
+        cnt = summer = 0
+        minAng = np.deg2rad(minDeg)
+        maxAng = np.deg2rad(maxDeg)
+        angs = found_lines[:,0,1]
+        for theta in angs:
+            angle = theta-np.pi
+            if(minAng <= angle <= maxAng):
+                summer += angle
+                cnt += 1
+        if(cnt > 0):
+            avgTheta = summer/float(cnt)
+            flag = True
+        return flag, avgTheta
+
+    def estimate_houghline_coeffs(self, filtered_vmap,hough_thresh=100, deg_offset=2.0):
+        sets = []
+        validGnd = False
+        bestM = 0.0
+        bestIntercept = 0
+
+        lines = cv2.HoughLines(filtered_vmap,1,np.pi/180, hough_thresh)
+
+        if(lines is None):
+            print("[INFO] VBOATS::estimate_houghline_coeffs() --- Couldnt find hough lines")
+            return validGnd,bestM,bestIntercept, sets
+
+        validGnd, avgTheta = self.is_gnd_present_disparity(lines)
+        if(validGnd):
+            avgAngle = np.rad2deg(avgTheta)
+            minAng = np.deg2rad(avgAngle - deg_offset)
+            maxAng = np.deg2rad(avgAngle + deg_offset)
+            h,w = filtered_vmap.shape[:2]
+            for i in range(0,len(lines)):
+                for r,theta in lines[i]:
+                    angle = theta-np.pi
+                    if(minAng <= angle <= maxAng):
+                        a = np.cos(theta);            b = np.sin(theta)
+                        x0 = a*r;                     y0 = b*r;
+                        x1 = int(x0 + 1000*(-b));     y1 = int(y0 + 1000*(a))
+                        x2 = int(x0 - 1000*(-b));     y2 = int(y0 - 1000*(a))
+                        m = float(y2 - y1)/float(x2 - x1)
+                        b = int(y1 - m * x1)
+                        if(b > bestIntercept):
+                            bestIntercept = b
+                            bestM = m
+        else: print("[INFO] VBOATS::estimate_houghline_coeffs() --- No Ground Found")
+        return validGnd,bestM,bestIntercept, sets
+
+    # ███████ ██ ██   ████████ ███████ ██████  ██ ███    ██  ██████
+    # ██      ██ ██      ██    ██      ██   ██ ██ ████   ██ ██
+    # █████   ██ ██      ██    █████   ██████  ██ ██ ██  ██ ██   ███
+    # ██      ██ ██      ██    ██      ██   ██ ██ ██  ██ ██ ██    ██
+    # ██      ██ ███████ ██    ███████ ██   ██ ██ ██   ████  ██████
+
     def filter_first_umap_strip(self,umap_strip,max_value,thresholds,ratio_thresh=0.35):
         newStrips = []
         n = len(thresholds)
@@ -1050,6 +1268,82 @@ class VBOATS:
             print("\t[INFO] vmap_filter_tester() --- Took %f seconds (%.2f Hz) to complete" % (dt, 1/dt))
         return np.copy(vmap), np.copy(newVmap)
 
+    def filter_disparity_vmap(self, _vmap, thresholds = [0.85,0.85,0.75,0.5], verbose=False, debug=False):
+        raw_vmap = np.copy(_vmap)
+        vMax = np.max(_vmap)
+        nThreshs = int(math.ceil((vMax/256.0)) * len(thresholds))
+        if(debug): print("vMax, nThreshs" % (vMax, nThreshs))
+
+        # Rough Theshold top of vmap heavy prior
+        h, w = raw_vmap.shape[:2]
+        dh = h / 3
+        topV = raw_vmap[0:dh, :]
+        botV = raw_vmap[dh:h, :]
+        tmpThresh = int(np.max(topV)*0.05)
+        _,topV = cv2.threshold(topV, tmpThresh,255,cv2.THRESH_TOZERO)
+        preVmap = np.concatenate((topV,botV), axis=0)
+
+        stripsPV = []
+        stripsV = strip_image(preVmap, nstrips=nThreshs, horizontal_strips=False)
+        for i, strip in enumerate(stripsV):
+            tmpMax = np.max(strip)
+            tmpMean = np.mean(strip)
+            tmpStd = np.std(strip)
+            if(tmpMean == 0):
+                stripsPV.append(strip)
+                continue
+            if(verbose): print("---------- [Strip %d] ---------- \r\n\tMax = %.1f, Mean = %.1f, Std = %.1f" % (i,tmpMax,tmpMean,tmpStd))
+            dratio = vMax/255.0
+            relRatio = (tmpMax-tmpStd)/float(vMax)
+            rrelRatio = (tmpMean)/float(tmpMax)
+            if(verbose): print("\tRatios: %.3f, %.3f, %.3f" % (dratio, relRatio, rrelRatio))
+            if(relRatio >= 0.4): gain = relRatio + rrelRatio
+            else: gain = 1.0 - (relRatio + rrelRatio)
+            thresh = int(thresholds[i]* gain * tmpMax)
+            if(verbose): print("\tGain = %.2f, Thresh = %d" % (gain,thresh))
+            _, tmpStrip = cv2.threshold(strip, thresh,255,cv2.THRESH_TOZERO)
+            stripsPV.append(tmpStrip)
+
+        filtV = np.concatenate(stripsPV, axis=1)
+        return filtV, stripsV, stripsPV
+    def filter_disparity_umap(self, _umap, thresholds = [0.85,0.85,0.75,0.5], verbose=False, debug=False):
+        raw_umap = np.copy(_umap)
+        uMax = np.max(_umap)
+        nThreshs = int(math.ceil((uMax/256.0)) * len(thresholds))
+        if(debug): print("uMax, nThreshs" % (uMax, nThreshs))
+
+        # Rough Theshold top of vmap heavy prior
+        _,preUmap = cv2.threshold(raw_umap, 2,255,cv2.THRESH_TOZERO)
+        stripsPU = []
+        stripsU = strip_image(preUmap, nstrips=nThreshs)
+        for i, strip in enumerate(stripsU):
+            tmpMax = np.max(strip)
+            tmpMean = np.mean(strip)
+            tmpStd = np.std(strip)
+            if(tmpMean == 0):
+                stripsPU.append(strip)
+                continue
+            if(verbose): print("---------- [Strip %d] ---------- \r\n\tMax = %.1f, Mean = %.1f, Std = %.1f" % (i,tmpMax,tmpMean,tmpStd))
+            dratio = uMax/255.0
+            relRatio = (tmpMax-tmpStd)/float(uMax)
+            rrelRatio = (tmpMean)/float(tmpMax)
+            if(verbose): print("\tRatios: %.3f, %.3f, %.3f" % (dratio, relRatio, rrelRatio))
+            if(relRatio >= 0.4): gain = relRatio + rrelRatio
+            else: gain = 1.0 - (relRatio + rrelRatio)
+            thresh = int(thresholds[i]* gain * tmpMax)
+            if(verbose): print("\tGain = %.2f, Thresh = %d" % (gain,thresh))
+            _, tmpStrip = cv2.threshold(strip, thresh,255,cv2.THRESH_TOZERO)
+            stripsPU.append(tmpStrip)
+
+        filtU = np.concatenate(stripsPU, axis=0)
+        return filtU, stripsU, stripsPU
+
+    # ██████  ██ ██████  ███████ ██      ██ ███    ██ ███████ ███████
+    # ██   ██ ██ ██   ██ ██      ██      ██ ████   ██ ██      ██
+    # ██████  ██ ██████  █████   ██      ██ ██ ██  ██ █████   ███████
+    # ██      ██ ██      ██      ██      ██ ██  ██ ██ ██           ██
+    # ██      ██ ██      ███████ ███████ ██ ██   ████ ███████ ███████
+
     def pipelineV1(self,_img, timing=False,debug_timing=False):
         """
         ============================================================================
@@ -1553,6 +1847,11 @@ class VBOATS:
         self.windows_ground = ground_wins
         return 0
 
+    # ██████  ██ ███████ ██████  ██       █████  ██    ██
+    # ██   ██ ██ ██      ██   ██ ██      ██   ██  ██  ██
+    # ██   ██ ██ ███████ ██████  ██      ███████   ████
+    # ██   ██ ██      ██ ██      ██      ██   ██    ██
+    # ██████  ██ ███████ ██      ███████ ██   ██    ██
 
     def umap_displays(self, border_color=(255,0,255)):
         """
@@ -1625,95 +1924,6 @@ class VBOATS:
 
         comp = np.concatenate((dispV1,borders2,dispV2), axis=1)
         return dispV1, dispV2, comp
-    def calculate_distance(self, umap, xs, ds, ys, focal=[462.138,462.138],
-        baseline=0.055, dscale=0.001, pp=[320.551,232.202], dsbuffer=1,
-        use_principle_point=True, use_disparity_buffer=True, verbose=False):
-
-        nonzero = umap.nonzero()
-        nonzeroy = np.array(nonzero[0])
-        nonzerox = np.array(nonzero[1])
-
-        if(use_disparity_buffer): ds[0] = ds[0] - dsbuffer
-
-        good_inds = ((nonzeroy >= ds[0]) & (nonzeroy < ds[1]) &
-                     (nonzerox >= xs[0]) &  (nonzerox < xs[1])).nonzero()[0]
-
-        xmean = np.int(np.mean(nonzerox[good_inds]))
-        dmean = np.mean(nonzeroy[good_inds])
-        ymean = np.mean(ys)
-        z = dmean*(65535/255)*dscale
-
-        if use_principle_point: px, py = pp[:2]
-        else: px = py = 0
-
-        x = ((xmean - px)/focal[0])*z
-        y = ((ymean - py)/focal[1])*z
-
-        dist = np.sqrt(x*x+z*z)
-
-        if(verbose): print("X, Y, Z: %.3f, %.3f, %.3f" % (x,y, dist))
-
-        return dist,x,y,z
-    def calculate_rotation_matrix(self,eulers):
-        r = eulers[0]; p = eulers[1]; y = eulers[2];
-        R11 = np.cos(p)*np.cos(y)
-        R12 = np.cos(p)*np.sin(y)
-        R13 = -np.sin(p)
-        R1 = [R11, R12, R13]
-
-        R21 = -(np.cos(r)*np.sin(y)) + (np.sin(r)*np.sin(p)*np.cos(y))
-        R22 = (np.cos(r)*np.cos(y)) + np.sin(r)*np.sin(p)*np.sin(y)
-        R23 = np.sin(r)*np.cos(p)
-        R2 = [R21,R22,R23]
-
-        R31 = (np.sin(r)*np.sin(y))+(np.cos(r)*np.sin(p)*np.cos(y))
-        R32 = -(np.sin(r)*np.cos(y)) + (np.cos(r)*np.sin(p)*np.sin(y))
-        R33 = np.cos(r)*np.cos(p)
-        R3 = [R31,R32,R33]
-
-        rotation = np.array([R1,R2,R3])
-        return rotation
-    def transform_pixel_to_world(self, rotation,pixel,translation, verbose=False):
-        Rinv = np.linalg.inv(rotation)
-        pos = np.dot(Rinv,pixel)
-        position = pos - translation
-        if(verbose): print("Projected Position (X,Y,Z): %s" % (', '.join(map(str, np.around(position,3)))) )
-        return position
-
-    def extract_obstacle_information(self,verbose=True):
-        distances = [];  angles = []
-        umap = self.umap_raw
-        xs = self.xBounds
-        ds = np.array(self.dbounds)
-        obs = self.obstacles
-        nObs = len(ds)
-        nObsNew = 0
-        if verbose: print("[INFO] VBOATS.py --- %d Obstacles Found" % (nObs))
-        if(nObs is not 0):
-            for i in range(nObs):
-                disparities = ds[i]
-                us = [obs[i][0][0], obs[i][1][0]]
-                vs = [obs[i][0][1], obs[i][1][1]]
-                z,ux,uy,uz = self.calculate_distance(umap,us,disparities,vs)
-
-                theta = math.atan2(ux,uz)
-                theta = np.nan_to_num(theta)
-                # if verbose: print("\tObstacle [%d] Distance, Angle: %.3f, %.3f" % (i,z,np.rad2deg(theta)))
-
-                if(z > 0.05):
-                    distances.append(z)
-                    angles.append(theta)
-                    nObsNew+=1
-                    if verbose: print("\tObstacle [%d] Distance, Angle: %.3f, %.3f" % (i,z,np.rad2deg(theta)))
-        else:
-            distances.append(-1)
-            angles.append(0)
-        if(nObsNew == 0):
-            distances.append(-1)
-            angles.append(0)
-
-        return distances,angles
-
     def generate_visualization(self, dists, angs, flip_ratio=False,use_rgb=True, alpha=0.35,font_scale = 0.35,verbose=False):
         img = np.copy(self.img)
         copy = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
@@ -1781,6 +1991,164 @@ class VBOATS:
             cv2.putText(disp,tmpString, (px-xmean/2, py), cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 255, 255), 1)
 
         return disp
+
+    #  ██████  ███████  ██████  ███    ███ ███████ ████████ ██████  ██    ██
+    # ██       ██      ██    ██ ████  ████ ██         ██    ██   ██  ██  ██
+    # ██   ███ █████   ██    ██ ██ ████ ██ █████      ██    ██████    ████
+    # ██    ██ ██      ██    ██ ██  ██  ██ ██         ██    ██   ██    ██
+    #  ██████  ███████  ██████  ██      ██ ███████    ██    ██   ██    ██
+
+    def calculate_distance(self, umap, xs, ds, ys, focal=[462.138,462.138],
+        baseline=0.055, dscale=0.001, pp=[320.551,232.202], dsbuffer=1,
+        use_principle_point=True, use_disparity_buffer=True, verbose=False):
+
+        nonzero = umap.nonzero()
+        nonzeroy = np.array(nonzero[0])
+        nonzerox = np.array(nonzero[1])
+
+        if(use_disparity_buffer): ds[0] = ds[0] - dsbuffer
+
+        good_inds = ((nonzeroy >= ds[0]) & (nonzeroy < ds[1]) &
+                     (nonzerox >= xs[0]) &  (nonzerox < xs[1])).nonzero()[0]
+
+        xmean = np.int(np.mean(nonzerox[good_inds]))
+        dmean = np.mean(nonzeroy[good_inds])
+        ymean = np.mean(ys)
+        z = dmean*(65535/255)*dscale
+
+        if use_principle_point: px, py = pp[:2]
+        else: px = py = 0
+
+        x = ((xmean - px)/focal[0])*z
+        y = ((ymean - py)/focal[1])*z
+        dist = np.sqrt(x*x+z*z)
+
+        if(verbose): print("X, Y, Z: %.3f, %.3f, %.3f" % (x,y, dist))
+        return dist,x,y,z
+
+    def calculate_distance_disparity(self, umap, xs, ds, ys, focal=[462.138,462.138],
+        baseline=0.055, dscale=0.001, pp=[320.551,232.202], dsbuffer=1, aux_dist_factor=1.35, dtype_cvt_gain=None,
+        use_principle_point=True, use_disparity_buffer=True, verbose=False):
+
+        nonzero = umap.nonzero()
+        nonzeroy = np.array(nonzero[0])
+        nonzerox = np.array(nonzero[1])
+
+        if(use_disparity_buffer): ds[0] = ds[0] - dsbuffer
+
+        good_inds = ((nonzeroy >= ds[0]) & (nonzeroy < ds[1]) &
+                     (nonzerox >= xs[0]) &  (nonzerox < xs[1])).nonzero()[0]
+
+        xmean = np.int(np.mean(nonzerox[good_inds]))
+        dmean = np.mean(nonzeroy[good_inds])
+        ymean = np.mean(ys)
+
+        if(dtype_cvt_gain is None): dtype_cvt_gain = 1.0
+        zgain = 1.0/(dtype_cvt_gain*dscale*aux_dist_factor)
+        z = (1.0/dmean)*zgain
+
+        if use_principle_point: px, py = pp[:2]
+        else: px = py = 0
+
+        x = ((xmean - px)/focal[0])*z
+        y = ((ymean - py)/focal[1])*z
+        dist = np.sqrt(x*x+z*z)
+
+        if(verbose): print("X, Y, Z: %.3f, %.3f, %.3f" % (x,y, dist))
+        return dist,x,y,z
+
+    def calculate_rotation_matrix(self,eulers):
+        r = eulers[0]; p = eulers[1]; y = eulers[2];
+        R11 = np.cos(p)*np.cos(y)
+        R12 = np.cos(p)*np.sin(y)
+        R13 = -np.sin(p)
+        R1 = [R11, R12, R13]
+
+        R21 = -(np.cos(r)*np.sin(y)) + (np.sin(r)*np.sin(p)*np.cos(y))
+        R22 = (np.cos(r)*np.cos(y)) + np.sin(r)*np.sin(p)*np.sin(y)
+        R23 = np.sin(r)*np.cos(p)
+        R2 = [R21,R22,R23]
+
+        R31 = (np.sin(r)*np.sin(y))+(np.cos(r)*np.sin(p)*np.cos(y))
+        R32 = -(np.sin(r)*np.cos(y)) + (np.cos(r)*np.sin(p)*np.sin(y))
+        R33 = np.cos(r)*np.cos(p)
+        R3 = [R31,R32,R33]
+
+        rotation = np.array([R1,R2,R3])
+        return rotation
+    def transform_pixel_to_world(self, rotation,pixel,translation, verbose=False):
+        Rinv = np.linalg.inv(rotation)
+        pos = np.dot(Rinv,pixel)
+        position = pos - translation
+        if(verbose): print("Projected Position (X,Y,Z): %s" % (', '.join(map(str, np.around(position,3)))) )
+        return position
+
+    def extract_obstacle_information(self, minDistance=0.05, verbose=True):
+        distances = [];  angles = []
+        umap = self.umap_raw
+        xs = self.xBounds
+        ds = np.array(self.dbounds)
+        obs = self.obstacles
+        nObs = len(ds)
+        nObsNew = 0
+        if verbose: print("[INFO] VBOATS.py --- %d Obstacles Found" % (nObs))
+        if(nObs is not 0):
+            for i in range(nObs):
+                disparities = ds[i]
+                us = [obs[i][0][0], obs[i][1][0]]
+                vs = [obs[i][0][1], obs[i][1][1]]
+                z,ux,uy,uz = self.calculate_distance(umap,us,disparities,vs)
+
+                theta = math.atan2(ux,uz)
+                theta = np.nan_to_num(theta)
+                # if verbose: print("\tObstacle [%d] Distance, Angle: %.3f, %.3f" % (i,z,np.rad2deg(theta)))
+
+                if(z > minDistance):
+                    distances.append(z)
+                    angles.append(theta)
+                    nObsNew+=1
+                    if verbose: print("\tObstacle [%d] Distance, Angle: %.3f, %.3f" % (i,z,np.rad2deg(theta)))
+        else:
+            distances.append(-1)
+            angles.append(0)
+        if(nObsNew == 0):
+            distances.append(-1)
+            angles.append(0)
+
+        return distances,angles
+
+    def extract_obstacle_information_disparity(self, umap, xBounds, dBounds, obstacles, verbose=True):
+        distances = [];  angles = []
+        xs = xBounds
+        ds = np.array(dBounds)
+        obs = obstacles
+        nObs = len(ds)
+        nObsNew = 0
+        if verbose: print("[INFO] VBOATS.py --- %d Obstacles Found" % (nObs))
+        if(nObs is not 0):
+            for i in range(nObs):
+                disparities = ds[i]
+                us = [obs[i][0][0], obs[i][1][0]]
+                vs = [obs[i][0][1], obs[i][1][1]]
+                z,ux,uy,uz = self.calculate_distance_disparity(umap,us,disparities,vs)
+
+                theta = math.atan2(ux,uz)
+                theta = np.nan_to_num(theta)
+                # if verbose: print("\tObstacle [%d] Distance, Angle: %.3f, %.3f" % (i,z,np.rad2deg(theta)))
+
+                if(z > 0.05):
+                    distances.append(z)
+                    angles.append(theta)
+                    nObsNew+=1
+                    if verbose: print("\tObstacle [%d] Distance, Angle: %.3f, %.3f" % (i,z,np.rad2deg(theta)))
+        else:
+            distances.append(-1)
+            angles.append(0)
+        if(nObsNew == 0):
+            distances.append(-1)
+            angles.append(0)
+
+        return distances,angles
 
     def read_image(self,_img):
         """
