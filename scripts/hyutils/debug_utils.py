@@ -8,7 +8,6 @@
 
 import os, sys
 import numpy as np
-import pandas as pd
 
 def plist(head,values,dplace=2,sep=', '):
     try:
@@ -18,8 +17,3 @@ def plist(head,values,dplace=2,sep=', '):
     except:
         print(head + sep.join(str(val) for val in values))
         pass
-
-def pmat(mat,col_lbls,row_lbls, head=None):
-    df = pd.DataFrame(mat, columns=col_lbls, index=row_lbls)
-    if head is not None: display(HTML('<h3>'+ head +'</h3>'))
-    display(df)
