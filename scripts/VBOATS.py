@@ -2117,7 +2117,8 @@ class VBOATS:
 
         return distances,angles
 
-    def extract_obstacle_information_disparity(self, umap, xBounds, dBounds, obstacles, verbose=True):
+    def extract_obstacle_information_disparity(self, umap, xBounds, dBounds, obstacles, focal=[462.138,462.138],
+        baseline=0.055, dscale=0.001, pp=[320.551,232.202], dtype_cvt_gain=None, verbose=True):
         distances = [];  angles = []
         xs = xBounds
         ds = np.array(dBounds)
@@ -2130,7 +2131,7 @@ class VBOATS:
                 disparities = ds[i]
                 us = [obs[i][0][0], obs[i][1][0]]
                 vs = [obs[i][0][1], obs[i][1][1]]
-                z,ux,uy,uz = self.calculate_distance_disparity(umap,us,disparities,vs)
+                z,ux,uy,uz = self.calculate_distance_disparity(umap,us,disparities,vs,focal=focal,baseline=baseline,dscale=dscale, pp=pp, dtype_cvt_gain=dtype_cvt_gain)
 
                 theta = math.atan2(ux,uz)
                 theta = np.nan_to_num(theta)
