@@ -12,6 +12,7 @@ class CameraD415(object):
         self.rgb_resolution = rgb_resolution
         self.flag_save = flag_save
         self.frames = None
+        self.aligned_frames = None
         self.writerD = None
         self.writerRGB = None
 
@@ -37,6 +38,7 @@ class CameraD415(object):
         self.dscale = self.get_depth_scale()
         self.intrinsics = self.get_intrinsics()
         self.extrinsics = self.get_extrinsics()
+        self.align = rs.align(rs.stream.color)
 
         if(self.flag_save): # Configure depth and color streams
             fourcc = cv2.VideoWriter_fourcc('M','J','P','G')
@@ -104,10 +106,12 @@ class CameraD415(object):
         else: depth_scale = -1
         return depth_scale
 
-    def read(self):
+    def read(self, flag_aligned = False):
         self.frames = self.pipeline.wait_for_frames()
-        rgb = self.get_rgb_image()
-        depth = self.get_depth_image()
+        if(flag_aligned): self.aligned_frames = self.align.process(self.frames)
+
+        rgb = self.get_rgb_image(flag_aligned=flag_aligned)
+        depth = self.get_depth_image(flag_aligned=flag_aligned)
         # if(self.pipeline.poll_for_frames()):
         #     self.frames = self.pipeline.wait_for_frames()
         #    rgb = self.get_rgb_image()
@@ -117,20 +121,24 @@ class CameraD415(object):
         #     depth = None
         return rgb, depth
 
-    def get_rgb_image(self):
-        if(self.frames is not None):
+    def get_rgb_image(self, flag_aligned = False):
+        if(flag_aligned and (self.aligned_frames is not None)):
+            frame = self.aligned_frames.get_color_frame()
+            img = np.asanyarray(frame.get_data())
+        elif(self.frames is not None):
             frame = self.frames.get_color_frame()
             img = np.asanyarray(frame.get_data())
-        else:
-            img = None
+        else: img = None
         return img
 
-    def get_depth_image(self):
-        if(self.frames is not None):
+    def get_depth_image(self, flag_aligned = False):
+        if(flag_aligned and (self.aligned_frames is not None)):
+            frame = self.aligned_frames.get_depth_frame()
+            img = np.asanyarray(frame.get_data(),dtype=np.float32)
+        elif(self.frames is not None):
             frame = self.frames.get_depth_frame()
             img = np.asanyarray(frame.get_data(),dtype=np.float32)
-        else:
-            img = None
+        else: img = None
         return img
 
     def loop(self):
