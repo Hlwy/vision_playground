@@ -4,9 +4,13 @@ import cv2
 import numpy as np
 import rospy, tf
 import os, csv, time, math
+from threading import Thread
 
+from std_msgs.msg import Header
 from cv_bridge import CvBridge, CvBridgeError
-from sensor_msgs.msg import Image,CameraInfo,CompressedImage
+
+from sensor_msgs import point_cloud2
+from sensor_msgs.msg import Image,CameraInfo,CompressedImage, PointCloud2, PointField
 from tf.transformations import euler_from_quaternion, quaternion_from_euler
 
 from devices.d415_camera import *
@@ -19,10 +23,13 @@ class d415_camera_node:
 
         self.ns = rospy.get_namespace()
         self.fps = rospy.get_param('~fps', 30)
-        update_rate = rospy.get_param('~update_rate', 30)
+        self.update_rate = rospy.get_param('~update_rate', 90)
         self.save_path = rospy.get_param('~save_path',imgsPath)
         self.flag_save_imgs = rospy.get_param('~flag_save_imgs', False)
         self.use_float_depth = rospy.get_param('~use_float_depth', True)
+        self.publishTf = rospy.get_param('~publish_tf', True)
+        self.enable_pc = rospy.get_param('~enable_pointcloud', False)
+        self.get_aligned = rospy.get_param('~use_aligned', True)
         self.cam_name = rospy.get_param('~camera_name',"d415")
 
         self.base_tf_frame = rospy.get_param('~base_tf_frame', "base_link")
@@ -30,7 +37,6 @@ class d415_camera_node:
         rgb_optical_tf_frame = rospy.get_param('~rgb_optical_tf_frame', "/rgb_optical_frame")
         depth_optical_tf_frame = rospy.get_param('~depth_optical_tf_frame', "/depth_optical_frame")
         self.cam_base_tf_frame = self.cam_name + cam_base_tf_frame
-        # self.cam_base_tf_frame = cam_base_tf_frame
         self.rgb_optical_tf_frame = self.cam_name + rgb_optical_tf_frame
         self.depth_optical_tf_frame = self.cam_name + depth_optical_tf_frame
 
@@ -38,15 +44,19 @@ class d415_camera_node:
         image_topic_rgb = rospy.get_param('~rgb_image_topic', "/rgb/image_raw")
         depth_info_topic = rospy.get_param('~depth_info_topic', "/depth/camera_info")
         rgb_info_topic = rospy.get_param('~rgb_info_topic', "/rgb/camera_info")
+        cloud_topic = rospy.get_param('~cloud_topic', "/cloud")
         self.depth_image_topic = self.ns + self.cam_name + depth_image_topic
         self.image_topic_rgb = self.ns + self.cam_name + image_topic_rgb
         self.depth_info_topic = self.ns + self.cam_name + depth_info_topic
         self.rgb_info_topic = self.ns + self.cam_name + rgb_info_topic
+        self.cloud_topic = self.ns + self.cam_name + cloud_topic
 
         self.depth_info_pub = rospy.Publisher(self.depth_info_topic,CameraInfo,queue_size=10)
         self.rgb_info_pub = rospy.Publisher(self.rgb_info_topic,CameraInfo,queue_size=10)
         self.rgb_pub = rospy.Publisher(self.image_topic_rgb,Image,queue_size=10)
         self.depth_pub = rospy.Publisher(self.depth_image_topic,Image,queue_size=10)
+        if(self.enable_pc): self.cloud_pub = rospy.Publisher(self.cloud_topic,PointCloud2,queue_size=10)
+        else: self.cloud_pub = None
 
         self.bridge = CvBridge()
         self.br = tf.TransformBroadcaster()
@@ -55,13 +65,18 @@ class d415_camera_node:
         self.intr = self.cam.get_intrinsics()
         self.extr = self.cam.get_extrinsics()
 
-        fx = self.intr["depth"].fx
-        fy = self.intr["depth"].fy
-        ppx = self.intr['depth'].ppx
-        ppy = self.intr['depth'].ppy
+        fxd = self.intr["depth"].fx
+        fyd = self.intr["depth"].fy
+        ppxd = self.intr['depth'].ppx
+        ppyd = self.intr['depth'].ppy
 
-        self.focal = [fx, fy]
-        self.ppoint = [ppx, ppy]
+        fxc = self.intr["color"].fx
+        fyc = self.intr["color"].fy
+        ppxc = self.intr['color'].ppx
+        ppyc = self.intr['color'].ppy
+
+        self.focal = [fxd, fyd]
+        self.ppoint = [ppxd, ppyd]
         self.baseline = self.extr.translation[0]
 
         self.rgb_info_msg = CameraInfo()
@@ -69,26 +84,30 @@ class d415_camera_node:
         self.rgb_info_msg.width = self.intr['color'].width
         self.rgb_info_msg.height = self.intr['color'].height
         self.rgb_info_msg.distortion_model = "plumb_bob"
-        self.rgb_info_msg.K = [fx, 0, ppx, 0, fy, ppy, 0, 0, 1]
+        self.rgb_info_msg.K = [fxc, 0, ppxc, 0, fyc, ppyc, 0, 0, 1]
         self.rgb_info_msg.D = [0, 0, 0, 0]
-        self.rgb_info_msg.P = [fx, 0, ppx, 0, 0, fy, ppy, 0, 0, 0, 1, 0]
+        self.rgb_info_msg.P = [fxc, 0, ppxc, 0, 0, fyc, ppyc, 0, 0, 0, 1, 0]
 
         self.depth_info_msg = CameraInfo()
         self.depth_info_msg.header.frame_id = self.depth_optical_tf_frame
         self.depth_info_msg.width = self.intr['depth'].width
         self.depth_info_msg.height = self.intr['depth'].height
         self.depth_info_msg.distortion_model = "plumb_bob"
-        self.depth_info_msg.K = [fx, 0, ppx, 0, fy, ppy, 0, 0, 1]
+        self.depth_info_msg.K = [fxd, 0, ppxd, 0, fyd, ppyd, 0, 0, 1]
         self.depth_info_msg.D = [0, 0, 0, 0]
-        self.depth_info_msg.P = [fx, 0, ppx, 0, 0, fy, ppy, 0, 0, 0, 1, 0]
+        self.depth_info_msg.P = [fxd, 0, ppxd, 0, 0, fyd, ppyd, 0, 0, 0, 1, 0]
 
-        self.r = rospy.Rate(update_rate)
+        self.pc2_msg_fields = [PointField('x', 0, PointField.FLOAT32, 1),PointField('y', 4, PointField.FLOAT32, 1),PointField('z', 8, PointField.FLOAT32, 1)]
+
+        self.r = rospy.Rate(self.update_rate)
         self.rgb = []
         self.depth = []
         self.disparity = []
 
         self.count = 0
         self.camcount = 0
+        self.prev_func_count = None
+        self.flag_kill_thread = False
 
         if self.flag_save_imgs:
             self.rgbDir = os.path.join(self.save_path, "rgb")
@@ -101,6 +120,36 @@ class d415_camera_node:
                     print("Created directory \'%s\' " % dir)
                 else: print("Directory \'%s\' already exists" % dir)
         print("[INFO] d415_camera_node --- Started...")
+
+        if(self.enable_pc):
+            self.cloudPubThread = Thread(target=self.cloudPubFunc,args=())
+            self.cloudPubThread.start()
+        else:
+            self.cloudPubThread = None
+
+    def __del__(self):
+        self.flag_kill_thread = True
+        if(self.cloudPubThread is not None):
+            print("[INFO] d415_camera_node::__del__() ---- Killing ready_flag publisher Thread...")
+            self.cloudPubThread.join()
+
+    def cloudPubFunc(self):
+        while not self.flag_kill_thread:
+            if(rospy.is_shutdown()): break
+            if(self.prev_func_count is None): self.prev_func_count = self.camcount
+
+            if(self.prev_func_count != self.camcount):
+                self.prev_func_count = self.camcount
+                # print("[INFO] d415_camera_node::loop() --- Getting pointcloud...")
+                cloud = self.cam.get_pointcloud()
+                # points = cloud.tolist()
+                header = Header()
+                header.seq = self.camcount
+                header.stamp = rospy.Time.now()
+                header.frame_id = self.depth_optical_tf_frame
+                pc2_msg = point_cloud2.create_cloud(header, self.pc2_msg_fields, np.asarray(cloud.get_vertices()) )
+                # pc2_msg = point_cloud2.create_cloud(header, self.pc2_msg_fields, points )
+                self.cloud_pub.publish(pc2_msg)
 
     def camCallback(self, _rgb, _depth, debug=False):
         if(debug): print("[INFO] d415_camera_node::camCallback() --- Converting frames...")
@@ -146,10 +195,10 @@ class d415_camera_node:
 
         self.depth_info_msg.header.stamp = curT
         self.depth_info_msg.header.seq = self.count
-
-        self.br.sendTransform((0,0,0), tf.transformations.quaternion_from_euler(-(np.pi/2.0), 0, -(np.pi/2.0)), curT, self.depth_optical_tf_frame,self.cam_base_tf_frame)
-        self.br.sendTransform((0,0,0), tf.transformations.quaternion_from_euler(-(np.pi/2.0), 0, -(np.pi/2.0)), curT, self.rgb_optical_tf_frame,self.cam_base_tf_frame)
-        self.br.sendTransform((0.21,0.0,0.02), tf.transformations.quaternion_from_euler(0.0, 0.0, 0.0), rospy.Time.now(), self.cam_base_tf_frame,self.base_tf_frame)
+        if(self.publishTf):
+            self.br.sendTransform((0,0,0), tf.transformations.quaternion_from_euler(-(np.pi/2.0), 0, -(np.pi/2.0)), curT, self.depth_optical_tf_frame,self.cam_base_tf_frame)
+            self.br.sendTransform((0,0,0), tf.transformations.quaternion_from_euler(-(np.pi/2.0), 0, -(np.pi/2.0)), curT, self.rgb_optical_tf_frame,self.cam_base_tf_frame)
+            self.br.sendTransform((0.21,0.0,0.02), tf.transformations.quaternion_from_euler(0.0, 0.0, 0.0), rospy.Time.now(), self.cam_base_tf_frame,self.base_tf_frame)
         return self.rgb_info_msg, self.depth_info_msg
 
     def save_image_to_file(self, img, path):
@@ -165,7 +214,7 @@ class d415_camera_node:
             if(rospy.is_shutdown()): break
             try:
                 # t0 = time.time()
-                rgb, depth = self.cam.read()
+                rgb, depth = self.cam.read(flag_aligned=self.get_aligned)
                 if((rgb is None) and (depth is None)):
                     print("[INFO] d415_camera_node::loop() --- Grabbed frames both None, Skipping...")
                     continue

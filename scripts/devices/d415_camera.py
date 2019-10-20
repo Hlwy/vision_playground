@@ -1,5 +1,6 @@
 import numpy as np
 import cv2, time, pprint
+import threading
 import pyrealsense2 as rs
 import matplotlib.pyplot as plt
 
@@ -7,12 +8,16 @@ pp = pprint.PrettyPrinter(indent=4)
 
 class CameraD415(object):
     def __init__(self, flag_save=False,use_statistics=False, fps=60,depth_resolution=(640,480),rgb_resolution=(640,480),verbose=False):
+        self.lock = threading.Lock()
         self.fps = fps
         self.depth_resolution = depth_resolution
         self.rgb_resolution = rgb_resolution
         self.flag_save = flag_save
         self.frames = None
         self.aligned_frames = None
+        self.rgb_frame = None
+        self.depth_frame = None
+
         self.writerD = None
         self.writerRGB = None
 
@@ -42,9 +47,8 @@ class CameraD415(object):
 
         if(self.flag_save): # Configure depth and color streams
             fourcc = cv2.VideoWriter_fourcc('M','J','P','G')
-            self.writerD = cv2.VideoWriter("realsense_d415_depth.avi", fourcc, self.fps,(640, 480), True)
-            self.writerRGB = cv2.VideoWriter("realsense_d415_rgb.avi", fourcc, self.fps,(640, 480), True)
-        # else: print("[ERROR] Could not establish CameraD415 VideoWriter's!")
+            self.writerD = cv2.VideoWriter("realsense_d415_depth.avi", fourcc, self.fps,self.depth_resolution, True)
+            self.writerRGB = cv2.VideoWriter("realsense_d415_rgb.avi", fourcc, self.fps,self.rgb_resolution, True)
 
         if(use_statistics): self.dmax_avg = self.calculate_statistics(duration=5.0)
         else: self.dmax_avg = 65535
@@ -112,34 +116,69 @@ class CameraD415(object):
 
         rgb = self.get_rgb_image(flag_aligned=flag_aligned)
         depth = self.get_depth_image(flag_aligned=flag_aligned)
-        # if(self.pipeline.poll_for_frames()):
-        #     self.frames = self.pipeline.wait_for_frames()
-        #    rgb = self.get_rgb_image()
-        #    depth = self.get_depth_image()
-        # else:
-        #     rgb = None
-        #     depth = None
+
         return rgb, depth
 
     def get_rgb_image(self, flag_aligned = False):
+        self.lock.acquire()
         if(flag_aligned and (self.aligned_frames is not None)):
             frame = self.aligned_frames.get_color_frame()
+            self.rgb_frame = frame
             img = np.asanyarray(frame.get_data())
         elif(self.frames is not None):
             frame = self.frames.get_color_frame()
+            self.rgb_frame = frame
             img = np.asanyarray(frame.get_data())
         else: img = None
+        self.lock.release()
         return img
 
     def get_depth_image(self, flag_aligned = False):
+        self.lock.acquire()
         if(flag_aligned and (self.aligned_frames is not None)):
             frame = self.aligned_frames.get_depth_frame()
+            self.depth_frame = frame
             img = np.asanyarray(frame.get_data(),dtype=np.float32)
         elif(self.frames is not None):
             frame = self.frames.get_depth_frame()
+            self.depth_frame = frame
             img = np.asanyarray(frame.get_data(),dtype=np.float32)
         else: img = None
+        self.lock.release()
         return img
+
+    def get_pointcloud(self):
+        pc = rs.pointcloud()
+        # points = rs.points()
+        self.lock.acquire()
+        if(self.depth_frame is not None):
+            # img = np.asanyarray(self.depth_frame.get_data(),dtype=np.float32)
+            # [height, width] = img.shape
+            # nx = np.linspace(0, width-1, width)
+            # ny = np.linspace(0, height-1, height)
+            # u, v = np.meshgrid(nx, ny)
+            # x = (u.flatten() - self.intrinsics["depth"].ppx)/self.intrinsics["depth"].fx
+            # y = (v.flatten() - self.intrinsics["depth"].ppy)/self.intrinsics["depth"].fy
+            #
+            # z = img.flatten() / 1000;
+            # x = np.multiply(x,z)
+            # y = np.multiply(y,z)
+            #
+            # x = x[np.nonzero(z)]
+            # y = y[np.nonzero(z)]
+            # z = z[np.nonzero(z)]
+            # points = np.concatenate([[x,y,z]]).T
+
+            pc.map_to(self.rgb_frame)
+            points = pc.calculate(self.depth_frame)
+            # points = np.asarray(points.get_vertices(), np.float32)
+            # print(points.shape, len(points))
+            # points = np.asarray(points.get_data())
+            # vtx = np.asarray(points.get_vertices())
+            # # points.("1.ply", cam.frames.get_color_frame())
+        else: points = None
+        self.lock.release()
+        return points
 
     def loop(self):
         while True:
