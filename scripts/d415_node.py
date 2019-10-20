@@ -79,6 +79,18 @@ class d415_camera_node:
         self.ppoint = [ppxd, ppyd]
         self.baseline = self.extr.translation[0]
 
+        print("""Camera Info:
+------------
+Color:
+    fx, fy: %.2f, %.2f
+    cx, cy: %.2f, %.2f
+
+Depth:
+    fx, fy: %.2f, %.2f
+    cx, cy: %.2f, %.2f
+    baseline: %.2f
+------------""" % (fxc,fyc,ppxc,ppyc, fxd,fyd,ppxd,ppyd,self.baseline))
+
         self.rgb_info_msg = CameraInfo()
         self.rgb_info_msg.header.frame_id = self.rgb_optical_tf_frame
         self.rgb_info_msg.width = self.intr['color'].width
@@ -171,9 +183,20 @@ class d415_camera_node:
 
         if(debug): print("[INFO] d415_camera_node::camCallback() --- Publishing ROS frames...")
         try:
+            curT = rospy.Time.now()
             rgbImgMsg = self.bridge.cv2_to_imgmsg(self.rgb, "bgr8")
             if(self.use_float_depth): depthImgMsg = self.bridge.cv2_to_imgmsg(_depth*self.cam.dscale, "32FC1")
             else: depthImgMsg = self.bridge.cv2_to_imgmsg(self.depth, "8UC1")
+
+            rgbImgMsg.header.stamp = curT
+            rgbImgMsg.header.seq = self.camcount + 1
+            # rgbImgMsg.header.frame_id = self.rgb_optical_tf_frame
+            rgbImgMsg.header.frame_id = self.cam_base_tf_frame
+
+            depthImgMsg.header.stamp = curT
+            depthImgMsg.header.seq = self.camcount + 1
+            # depthImgMsg.header.frame_id = self.depth_optical_tf_frame
+            depthImgMsg.header.frame_id = self.cam_base_tf_frame
 
             self.rgb_pub.publish(rgbImgMsg)
             self.depth_pub.publish(depthImgMsg)
@@ -196,9 +219,10 @@ class d415_camera_node:
         self.depth_info_msg.header.stamp = curT
         self.depth_info_msg.header.seq = self.count
         if(self.publishTf):
-            self.br.sendTransform((0,0,0), tf.transformations.quaternion_from_euler(-(np.pi/2.0), 0, -(np.pi/2.0)), curT, self.depth_optical_tf_frame,self.cam_base_tf_frame)
-            self.br.sendTransform((0,0,0), tf.transformations.quaternion_from_euler(-(np.pi/2.0), 0, -(np.pi/2.0)), curT, self.rgb_optical_tf_frame,self.cam_base_tf_frame)
-            self.br.sendTransform((0.21,0.0,0.02), tf.transformations.quaternion_from_euler(0.0, 0.0, 0.0), rospy.Time.now(), self.cam_base_tf_frame,self.base_tf_frame)
+            self.br.sendTransform((0,0,0), tf.transformations.quaternion_from_euler(0,0,0), curT, self.depth_optical_tf_frame,self.cam_base_tf_frame)
+            self.br.sendTransform((0,0,0), tf.transformations.quaternion_from_euler(0,0,0), curT, self.rgb_optical_tf_frame,self.cam_base_tf_frame)
+            # self.br.sendTransform((0.21,0.0,0.02), tf.transformations.quaternion_from_euler(-(np.pi/2.0), 0, -(np.pi/2.0)), rospy.Time.now(), self.cam_base_tf_frame,self.base_tf_frame)
+            self.br.sendTransform((0.0,0.0,0.0), tf.transformations.quaternion_from_euler(-(np.pi/2.0), 0, -(np.pi/2.0)), rospy.Time.now(), self.cam_base_tf_frame,self.base_tf_frame)
         return self.rgb_info_msg, self.depth_info_msg
 
     def save_image_to_file(self, img, path):
