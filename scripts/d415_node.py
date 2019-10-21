@@ -22,7 +22,7 @@ class d415_camera_node:
         imgsPath = os.path.abspath(os.path.join(rootDir, "..")) + "/images"
 
         self.ns = rospy.get_namespace()
-        self.fps = rospy.get_param('~fps', 30)
+        self.fps = rospy.get_param('~fps', 60)
         self.update_rate = rospy.get_param('~update_rate', 90)
         self.save_path = rospy.get_param('~save_path',imgsPath)
         self.flag_save_imgs = rospy.get_param('~flag_save_imgs', False)
