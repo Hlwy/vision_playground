@@ -220,10 +220,15 @@ Depth:
         self.depth_info_msg.header.stamp = curT
         self.depth_info_msg.header.seq = self.count
         if(self.publishTf):
-            self.br.sendTransform((0,0,0), tf.transformations.quaternion_from_euler(0,0,0), curT, self.depth_optical_tf_frame,self.cam_base_tf_frame)
-            self.br.sendTransform((0,0,0), tf.transformations.quaternion_from_euler(0,0,0), curT, self.rgb_optical_tf_frame,self.cam_base_tf_frame)
+            self.br.sendTransform((0,0,0), tf.transformations.quaternion_from_euler(-(np.pi/2.0), 0, -(np.pi/2.0)), curT, self.depth_optical_tf_frame,self.cam_base_tf_frame)
+            self.br.sendTransform((0,0,0), tf.transformations.quaternion_from_euler(-(np.pi/2.0), 0, -(np.pi/2.0)), curT, self.rgb_optical_tf_frame,self.cam_base_tf_frame)
+
+            # self.br.sendTransform((0,0,0), tf.transformations.quaternion_from_euler(0,0,0), curT, self.depth_optical_tf_frame,self.cam_base_tf_frame)
+            # self.br.sendTransform((0,0,0), tf.transformations.quaternion_from_euler(0,0,0), curT, self.rgb_optical_tf_frame,self.cam_base_tf_frame)
             # self.br.sendTransform((0.21,0.0,0.02), tf.transformations.quaternion_from_euler(-(np.pi/2.0), 0, -(np.pi/2.0)), rospy.Time.now(), self.cam_base_tf_frame,self.base_tf_frame)
-            self.br.sendTransform((0.0,0.0,0.0), tf.transformations.quaternion_from_euler(-(np.pi/2.0), 0, -(np.pi/2.0)), rospy.Time.now(), self.cam_base_tf_frame,self.base_tf_frame)
+            # self.br.sendTransform((0.0,0.0,0.0), tf.transformations.quaternion_from_euler(-(np.pi/2.0), 0, -(np.pi/2.0)), rospy.Time.now(), self.cam_base_tf_frame,self.base_tf_frame)
+            self.br.sendTransform((0.21,0.0,0.0), tf.transformations.quaternion_from_euler(0,0,0), rospy.Time.now(), self.cam_base_tf_frame,self.base_tf_frame)
+        return self.rgb_info_msg, self.depth_info_msg
         return self.rgb_info_msg, self.depth_info_msg
 
     def save_image_to_file(self, img, path):
