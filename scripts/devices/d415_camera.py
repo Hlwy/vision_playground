@@ -6,6 +6,31 @@ import matplotlib.pyplot as plt
 
 pp = pprint.PrettyPrinter(indent=4)
 
+""" NOTES:
+
+Try to implement librealsense filters. The following filters were found:
+
+Decimation Filter:
+    filter magnitude = 2
+
+Depth to Disparity: True
+
+Spatial Filter:
+    filter magnitude = 2
+    filter smooth alpha = 0.5
+    filter smooth delta = 20.0
+    hole filling = disabled
+
+Temporal Filter:
+    filter smooth alpha = 0.4
+    filter smooth delta = 40.0
+    persistency mode = disabled
+
+Hole Filling Filter:
+    filter mode = farest from around
+
+"""
+
 class CameraD415(object):
     def __init__(self, flag_save=False,use_statistics=False, fps=60,depth_resolution=(640,480),rgb_resolution=(640,480),verbose=False):
         self.lock = threading.Lock()

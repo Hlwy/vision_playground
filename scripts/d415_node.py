@@ -61,7 +61,8 @@ class d415_camera_node:
         self.bridge = CvBridge()
         self.br = tf.TransformBroadcaster()
 
-        self.cam = CameraD415(flag_save=False,use_statistics=False,fps=self.fps, verbose=True)
+        res = (848, 480)
+        self.cam = CameraD415(flag_save=False,use_statistics=False,fps=self.fps, depth_resolution=res, verbose=True)
         self.intr = self.cam.get_intrinsics()
         self.extr = self.cam.get_extrinsics()
 
